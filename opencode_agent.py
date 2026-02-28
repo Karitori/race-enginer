@@ -23,6 +23,14 @@ def read_workspace_files():
                 context += f"\n\n--- {filename} ---\n{f.read()}"
     return context
 
+def broadcast_status(message: str):
+    """Sends a status update to the UI dashboard so the user can see what the agent is doing."""
+    logger.info(message)
+    try:
+        httpx.post("http://localhost:8000/api/agent_status", json={"message": message})
+    except Exception:
+        pass
+
 def query_telemetry():
     """Queries the DuckDB instance for the latest lap data."""
     try:
@@ -83,6 +91,7 @@ def run_agent_loop():
     
     while True:
         try:
+            broadcast_status("Reading workspace markdown files...")
             workspace_context = read_workspace_files()
             system_instruction = (
                 "You are an OpenCode Agent acting as a backend Strategy Analyst for an F1 team. "
@@ -94,8 +103,9 @@ def run_agent_loop():
                 "to alert the Race Engineer. If everything is fine, just say 'No action needed'."
             )
 
+            broadcast_status("Querying historical telemetry database (DuckDB)...")
             telemetry_data = query_telemetry()
-            logger.info("Analyzed recent telemetry. Asking Gemini for insights...")
+            broadcast_status("Analyzing data context using Gemini 2.5 Flash...")
             
             prompt = f"Live Database Query Results:\n{telemetry_data}\n\nDo we need to send an insight?"
             
@@ -117,6 +127,7 @@ def run_agent_loop():
                         if function_call.name == "send_insight_to_race_engineer":
                             args = function_call.args
                             if args:
+                                broadcast_status("CRITICAL: Executing 'send_insight_to_race_engineer' tool.")
                                 # Execute the local function
                                 result = send_insight_to_race_engineer(
                                     summary=args.get("summary", ""),
@@ -125,9 +136,9 @@ def run_agent_loop():
                                 )
                 else:
                     if response.text:
-                        logger.info(f"Agent decision: {response.text.strip()}")
+                        broadcast_status(f"Analysis Complete: {response.text.strip()}")
             else:
-                logger.info("No API key, running MOCK Tool Call")
+                broadcast_status("No API key, running MOCK Tool Call...")
                 send_insight_to_race_engineer(
                     summary="Rear tire wear is high due to aggressive driving",
                     recommendation="Tell Tushar to chill on exits or box next lap.",
@@ -138,6 +149,7 @@ def run_agent_loop():
             logger.error(f"Agent loop error: {e}")
             
         # Poll every 15 seconds
+        broadcast_status("Sleeping for 15 seconds before next analysis loop.")
         time.sleep(15)
 
 if __name__ == "__main__":
