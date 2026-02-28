@@ -37,3 +37,4 @@ websockets==12.0
 
 # --- Database ---
 duckdb==0.9.2
+python-dotenv==1.0.1

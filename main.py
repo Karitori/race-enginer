@@ -1,6 +1,11 @@
 import asyncio
 import logging
 import uvicorn
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
 from race_engineer.core.event_bus import bus
 from race_engineer.data.store import DataStore
 from race_engineer.telemetry.parser import BaseTelemetryParser
