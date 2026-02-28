@@ -2,10 +2,12 @@ import asyncio
 import logging
 import uvicorn
 from race_engineer.core.event_bus import bus
+from race_engineer.data.store import DataStore
 from race_engineer.telemetry.parser import BaseTelemetryParser
 from race_engineer.feedback.analyzer import PerformanceAnalyzer
 from race_engineer.voice.assistant import VoiceAssistant
 from race_engineer.intelligence.advisor import LLMAdvisor
+from race_engineer.intelligence.strategy_team import StrategyTeamWorker
 from race_engineer.ui.app import app
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -22,23 +24,28 @@ async def main():
     logger.info("Starting Race Engineer...")
 
     # Initialize components
+    datastore = DataStore("live_session.duckdb")
     telemetry_parser = BaseTelemetryParser()
     feedback_analyzer = PerformanceAnalyzer()
     voice_assistant = VoiceAssistant()
     
-    # Initialize the LLM intelligence layer (replaces simple mock routing)
+    # Initialize the LLM intelligence layer (Analyst Team + Race Engineer)
+    strategy_team = StrategyTeamWorker(datastore, poll_interval=10) # Poll every 10 seconds for demo
     llm_advisor = LLMAdvisor()
 
-    # Start independent concurrent loops (Telemetry listener, Voice listener, UI server)
+    # Start independent concurrent loops
     try:
         await asyncio.gather(
             telemetry_parser.start(),
             voice_assistant.listen_for_driver(),
+            strategy_team.start(),
             start_ui_server()
         )
     except KeyboardInterrupt:
         logger.info("Shutting down Race Engineer...")
         telemetry_parser.stop()
+        strategy_team.stop()
+        datastore.close()
 
 if __name__ == "__main__":
     asyncio.run(main())

@@ -7,6 +7,7 @@ from google.genai import types
 
 from race_engineer.core.event_bus import bus
 from race_engineer.telemetry.models import TelemetryTick, DriverQuery, DrivingInsight
+from race_engineer.intelligence.models import StrategyInsight
 
 logger = logging.getLogger(__name__)
 
@@ -21,14 +22,25 @@ class LLMAdvisor:
         
         # State tracking
         self.latest_telemetry: Optional[TelemetryTick] = None
+        self.latest_strategy: Optional[StrategyInsight] = None
         
         # Subscribe to data
         bus.subscribe("telemetry_tick", self._update_telemetry)
+        bus.subscribe("strategy_insight", self._update_strategy)
         bus.subscribe("driver_query", self._handle_query)
 
     async def _update_telemetry(self, tick: TelemetryTick):
         """Keep the latest telemetry in memory to provide context to the LLM."""
         self.latest_telemetry = tick
+
+    async def _update_strategy(self, insight: StrategyInsight):
+        """Keep the latest strategy from the Analyst Team."""
+        self.latest_strategy = insight
+        # If the analyst team marks something as critical (e.g., priority 5), 
+        # the Race Engineer should interrupt and speak it immediately.
+        if insight.criticality >= 4:
+            logger.info(f"LLM Advisor received CRITICAL strategy: {insight.recommendation}")
+            await self._send_insight(f"Strategy Team update: {insight.recommendation}", "strategy", insight.criticality)
 
     async def _handle_query(self, query: DriverQuery):
         """When the driver asks a question, consult Gemini using the latest telemetry."""
@@ -47,6 +59,9 @@ class LLMAdvisor:
             f"Tire Wear - FL:{t.tire_wear_fl:.1f}%, FR:{t.tire_wear_fr:.1f}%, "
             f"RL:{t.tire_wear_rl:.1f}%, RR:{t.tire_wear_rr:.1f}%"
         )
+        
+        if self.latest_strategy:
+            context += f"\nLatest Strategy Team Analysis: {self.latest_strategy.summary}. Rec: {self.latest_strategy.recommendation}"
 
         if not self.client:
             logger.warning("GEMINI_API_KEY not set. Using fallback dynamic response.")

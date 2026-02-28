@@ -1,31 +1,34 @@
 # Race Engineer: System Architecture
 
 ## Overview
-The Race Engineer system is an intelligent assistant designed to act as an automated race engineer for sim racing (e.g., F1 games). It parses real-time telemetry, analyzes driver performance, and communicates actionable feedback via voice.
+The Race Engineer system is an intelligent assistant designed to act as an automated race engineer for sim racing (e.g., F1 games). It parses real-time telemetry, analyzes driver performance, and uses a team of AI analysts working in the background to provide strategic advice to the main AI Race Engineer, who then communicates with the driver.
 
 ## Core Components
 
 ### 1. Telemetry Parser (`telemetry_engine`)
-- **Responsibility:** Ingest raw telemetry data from the racing simulator (usually via a UDP stream), decode the packets, and normalize them into a standardized format.
-- **Inputs:** Raw UDP packets from the game.
-- **Outputs:** Normalized telemetry data (Speed, Gear, Throttle, Brake, Steering, Car Position, Lap Times, Tire Wear, etc.).
+- **Responsibility:** Ingest raw telemetry data from the racing simulator (via UDP stream similar to `Fredrik2002/f1-25-telemetry-application`), decode packets, and publish normalized data.
+- **Outputs:** Normalized `TelemetryTick` events.
 
-### 2. Feedback Engine (`feedback_engine`)
-- **Responsibility:** Analyze the normalized telemetry data to generate driving insights, identify areas for improvement (e.g., suboptimal braking points, early acceleration, high tire wear), and track race strategy.
-- **Inputs:** Normalized telemetry data, historical lap data.
-- **Outputs:** Driving insights, performance alerts, and strategic recommendations (e.g., "Brake 10 meters later into Turn 1", "Tire temperatures are dropping").
+### 2. Historical Data Store (`DataStore` via DuckDB)
+- **Responsibility:** Subscribes to telemetry events and stores them in a fast, in-process analytical database (DuckDB) for time-series and aggregate analysis.
+- **Inputs:** `TelemetryTick`
+- **Outputs:** Persists data to a local `.duckdb` file and allows SQL querying.
 
-### 3. Voice Engine (`voice_engine`)
-- **Responsibility:** Handle all bidirectional verbal communication with the driver. It uses Speech-to-Text (STT) to understand driver queries and Text-to-Speech (TTS) to deliver feedback naturally.
-- **Inputs:** Driving insights from the Feedback Engine, Audio input from the driver's microphone.
-- **Outputs:** Audio output (spoken feedback), text transcripts of driver queries.
+### 3. Backend Analyst Team (`StrategyTeamWorker`)
+- **Responsibility:** Runs continuously in the background (like an `opencode` agent). It periodically queries DuckDB to identify trends (e.g., tire degradation over the last 5 laps, pace drop-off, fuel usage vs target). It uses an LLM to generate strategic advice.
+- **Inputs:** SQL aggregates from DuckDB.
+- **Outputs:** `StrategyInsight` events published to the Event Bus.
 
-### 4. Core Orchestrator / Event Bus (`core`)
-- **Responsibility:** Manage the lifecycle of the application and facilitate communication between components using an event-driven architecture.
-- **Data Flow:**
-  - `Telemetry Parser` publishes `TelemetryTick` and `LapCompleted` events.
-  - `Feedback Engine` subscribes to telemetry events, processes them, and publishes `InsightGenerated` events.
-  - `Voice Engine` subscribes to `InsightGenerated` events to announce them to the driver, and publishes `DriverQuery` events when the driver speaks.
+### 4. Main Race Engineer (`LLMAdvisor`)
+- **Responsibility:** The "voice in your ear". It maintains the latest live telemetry and the latest `StrategyInsight` from the Analyst Team in its context window. When the driver asks a question ("What's the strategy?"), it responds dynamically based on both the live data and the team's analysis.
+- **Inputs:** `TelemetryTick`, `StrategyInsight`, `DriverQuery` (from Voice Engine).
+- **Outputs:** `DrivingInsight` events (to be spoken).
+
+### 5. Voice Engine (`voice_engine`)
+- **Responsibility:** Handle bidirectional verbal communication with the driver via STT (Speech-to-Text) and TTS (Text-to-Speech).
+
+### 6. Web Dashboard (`ui/app.py`)
+- **Responsibility:** Real-time visual representation of telemetry and the Engineer's comms via FastAPI and WebSockets.
 
 ## Data Flow Diagram
 
@@ -34,25 +37,26 @@ The Race Engineer system is an intelligent assistant designed to act as an autom
 | F1 Simulator   | --------------> | Telemetry Parser |
 +----------------+                 +------------------+
                                             |
-                                            v (Normalized Telemetry)
+                                            v (TelemetryTick)
                                    +------------------+
-                                   |  Event Bus       | <---- State Management / Orchestration
+                                   |  Event Bus       | 
                                    +------------------+
                                             |
-                    +-----------------------+-----------------------+
-                    |                                               |
-                    v (Telemetry Streams)                           v (Feedback / Alerts)
-           +-----------------+                             +-----------------+
-           | Feedback Engine |                             | Voice Engine    |
-           +-----------------+                             +-----------------+
-                    |                                         ^           |
-                    +---(Generated Insights)------------------+           v
-                                                                    Audio I/O (Driver)
+      +-------------------------------------+-------------------------------------+
+      |                                     |                                     |
+      v                                     v                                     v
++-----------+ (SQL) +----------------+  +----------------+               +-----------------+
+| DataStore | <---> | Strategy Team  |  | Race Engineer  | <-----------> | Voice Engine    |
+| (DuckDB)  |       | (Background AI)|  | (LLM Advisor)  |               | (STT / TTS)     |
++-----------+       +----------------+  +----------------+               +-----------------+
+                            |                     ^
+                            v (StrategyInsight)   |
+                            +---------------------+
 ```
 
-## Tech Stack (Proposed)
+## Tech Stack
 - **Language:** Python 3.10+
-- **Telemetry:** `fastf1` (if offline data) or custom UDP sockets / `f1-2021-udp` parsers for real-time.
-- **Voice:** `SpeechRecognition` / `whisper` for STT, `pyttsx3` or ElevenLabs API for TTS.
-- **Concurrency:** `asyncio` for non-blocking event handling and I/O.
-- **Architecture Pattern:** Pub/Sub Event Bus.
+- **Database:** `duckdb` (In-process OLAP database for fast telemetry analytics)
+- **Intelligence:** `google-genai` (Gemini 2.5 Flash for both Analyst and Engineer roles)
+- **UI:** `FastAPI`, `uvicorn`, `websockets`
+- **Concurrency:** `asyncio` Event Bus
