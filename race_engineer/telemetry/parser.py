@@ -3,6 +3,7 @@ import logging
 from typing import Any, Dict
 
 from race_engineer.core.event_bus import bus
+from race_engineer.telemetry.models import TelemetryTick
 
 logger = logging.getLogger(__name__)
 
@@ -35,14 +36,24 @@ class BaseTelemetryParser:
             await asyncio.sleep(1.0)
             
             # Simulated incoming telemetry packet
-            mock_packet = {
-                "speed": 280,
-                "gear": 8,
-                "throttle": 1.0,
-                "brake": 0.0,
-                "lap": 12,
-                "track_position": 0.45
-            }
-            
-            # Process and publish normalized telemetry tick
-            await bus.publish("telemetry_tick", mock_packet)
+            try:
+                mock_packet = TelemetryTick(
+                    speed=280.0,
+                    gear=8,
+                    throttle=1.0,
+                    brake=0.0,
+                    steering=0.0,
+                    engine_rpm=11500,
+                    tire_wear_fl=15.0,
+                    tire_wear_fr=16.5,
+                    tire_wear_rl=14.0,
+                    tire_wear_rr=14.5,
+                    lap=12,
+                    track_position=0.45,
+                    sector=2
+                )
+                
+                # Process and publish normalized telemetry tick
+                await bus.publish("telemetry_tick", mock_packet)
+            except Exception as e:
+                logger.error(f"Failed to parse telemetry packet: {e}")

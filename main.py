@@ -4,6 +4,7 @@ from race_engineer.core.event_bus import bus
 from race_engineer.telemetry.parser import BaseTelemetryParser
 from race_engineer.feedback.analyzer import PerformanceAnalyzer
 from race_engineer.voice.assistant import VoiceAssistant
+from race_engineer.telemetry.models import DriverQuery, DrivingInsight
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -17,14 +18,15 @@ async def main():
     voice_assistant = VoiceAssistant()
 
     # Wire up a simple response for driver queries to demonstrate bidirectional flow
-    async def handle_driver_query(data: dict):
-        query = data.get("query", "")
+    async def handle_driver_query(query: DriverQuery):
         # Very simple routing: Feedback or Voice would normally handle LLM logic
-        if "tire" in query.lower():
-            await bus.publish(
-                "driving_insight",
-                {"message": "Tire wear is at 15 percent, they are holding up well.", "type": "info"}
+        if "tire" in query.query.lower():
+            insight = DrivingInsight(
+                message="Tire wear is around 15 percent, they are holding up well.",
+                type="info",
+                priority=3
             )
+            await bus.publish("driving_insight", insight)
     
     bus.subscribe("driver_query", handle_driver_query)
 

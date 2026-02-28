@@ -1,6 +1,6 @@
 import logging
-from typing import Dict, Any
 from race_engineer.core.event_bus import bus
+from race_engineer.telemetry.models import TelemetryTick, DrivingInsight
 
 logger = logging.getLogger(__name__)
 
@@ -14,29 +14,41 @@ class PerformanceAnalyzer:
 
         # Basic state tracking
         self.last_lap = 0
+        self.tire_warning_issued = False
 
-    async def _handle_telemetry_tick(self, data: Dict[str, Any]):
+    async def _handle_telemetry_tick(self, data: TelemetryTick):
         """Processes a single telemetry frame."""
-        # Simple placeholder logic: Analyze if we are doing a new lap
-        if "lap" in data and data["lap"] > self.last_lap:
-            self.last_lap = data["lap"]
+        # Lap detection
+        if data.lap > self.last_lap:
+            self.last_lap = data.lap
+            self.tire_warning_issued = False  # Reset per lap or stint
             logger.info(f"Feedback Engine: Detected new lap {self.last_lap}.")
-            # Publish a feedback insight
-            await bus.publish(
-                "driving_insight",
-                {
-                    "message": f"Lap {self.last_lap} started. Keep the momentum going.",
-                    "type": "encouragement"
-                }
+            
+            insight = DrivingInsight(
+                message=f"Lap {self.last_lap} started. Keep the momentum going.",
+                type="encouragement",
+                priority=2
             )
+            await bus.publish("driving_insight", insight)
 
-        # Placeholder logic: e.g. Brake point check
-        if data.get("brake", 0) > 0.8 and data.get("speed", 0) > 250:
+        # Brake point check
+        if data.brake > 0.8 and data.speed > 250:
             logger.info("Feedback Engine: Hard braking detected.")
-            await bus.publish(
-                "driving_insight",
-                {
-                    "message": "Watch the lockup, you are braking very hard into this zone.",
-                    "type": "warning"
-                }
+            insight = DrivingInsight(
+                message="Watch the lockup, you are braking very hard into this zone.",
+                type="warning",
+                priority=4
             )
+            await bus.publish("driving_insight", insight)
+
+        # Tire wear check
+        max_wear = max(data.tire_wear_fl, data.tire_wear_fr, data.tire_wear_rl, data.tire_wear_rr)
+        if max_wear > 60.0 and not self.tire_warning_issued:
+            logger.info(f"Feedback Engine: High tire wear detected ({max_wear}%).")
+            self.tire_warning_issued = True
+            insight = DrivingInsight(
+                message=f"Tires are heavily worn. You might want to consider boxing in the next few laps.",
+                type="strategy",
+                priority=5
+            )
+            await bus.publish("driving_insight", insight)
