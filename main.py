@@ -29,8 +29,8 @@ async def main():
     feedback_analyzer = PerformanceAnalyzer()
     voice_assistant = VoiceAssistant()
     
-    # Initialize the LLM intelligence layer (Analyst Team + Race Engineer)
-    strategy_team = StrategyTeamWorker(datastore, poll_interval=10) # Poll every 10 seconds for demo
+    # Initialize the LLM intelligence layer (Race Engineer)
+    # Strategy Analyst is now handled by the external OpenCode Agent Workspace
     llm_advisor = LLMAdvisor()
 
     # Start independent concurrent loops
@@ -38,13 +38,11 @@ async def main():
         await asyncio.gather(
             telemetry_parser.start(),
             voice_assistant.listen_for_driver(),
-            strategy_team.start(),
             start_ui_server()
         )
     except KeyboardInterrupt:
         logger.info("Shutting down Race Engineer...")
         telemetry_parser.stop()
-        strategy_team.stop()
         datastore.close()
 
 if __name__ == "__main__":

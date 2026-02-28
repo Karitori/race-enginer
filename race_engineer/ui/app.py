@@ -3,11 +3,32 @@ import json
 import logging
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
+from pydantic import BaseModel
 from race_engineer.core.event_bus import bus
+from race_engineer.intelligence.models import StrategyInsight
 
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Race Engineer Dashboard")
+
+class StrategyPayload(BaseModel):
+    summary: str
+    recommendation: str
+    criticality: int
+
+@app.post("/api/strategy")
+async def receive_strategy_from_agent(payload: StrategyPayload):
+    """
+    Webhook endpoint for external Analyst agents to push strategic insights.
+    """
+    insight = StrategyInsight(
+        summary=payload.summary,
+        recommendation=payload.recommendation,
+        criticality=payload.criticality
+    )
+    logger.info(f"Received external strategy insight via webhook: {payload.summary}")
+    await bus.publish("strategy_insight", insight)
+    return {"status": "success", "message": "Insight forwarded to Race Engineer"}
 
 html = """
 <!DOCTYPE html>
