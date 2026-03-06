@@ -120,7 +120,11 @@ Temperatures can be set globally (`LLM_TEMPERATURE`) or per role (`STRATEGY_TEMP
 
 ## Voice & Audio
 
-- TTS output uses `VOICE_TTS_BACKEND` (`pyttsx3` or `none`), with `VOICE_ENABLE_TTS=true|false`.
+- TTS output uses `VOICE_TTS_BACKEND` (`pyttsx3`, `piper`, or `none`), with `VOICE_ENABLE_TTS=true|false`.
+- For local lightweight `piper` TTS, set:
+  - `VOICE_TTS_BACKEND=piper`
+  - `VOICE_PIPER_MODEL_PATH=...` (required)
+  - optional: `VOICE_PIPER_EXE`, `VOICE_PIPER_SPEAKER_ID`
 - Optional mic STT is supported via `VOICE_ENABLE_STT=true` and `VOICE_STT_BACKEND=speech_recognition`.
 - Voice queue summarization now uses structured LLM output instead of manual JSON parsing.
 
