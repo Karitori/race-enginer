@@ -1,4 +1,3 @@
-import asyncio
 from typing import Any, Awaitable, Callable, TypedDict
 
 from db.contracts import TelemetryRepository
@@ -90,8 +89,7 @@ def make_collect_metrics_node(repository: TelemetryRepository):
     snapshot_tool = build_strategy_snapshot_tool(repository)
 
     async def _collect_metrics_node(state: StrategyState) -> StrategyState:
-        loop = asyncio.get_running_loop()
-        snapshot = await loop.run_in_executor(None, lambda: snapshot_tool.invoke({}))
+        snapshot = snapshot_tool.invoke({})
         if not isinstance(snapshot, dict):
             snapshot = {"ready": False}
         return {**state, "snapshot": snapshot, "team_calls": []}

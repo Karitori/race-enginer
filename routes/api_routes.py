@@ -51,10 +51,8 @@ async def execute_sql_query(payload: SQLQueryPayload):
     if datastore is None:
         return {"status": "error", "error": "Telemetry repository not initialized yet"}
     try:
-        import asyncio
-
-        loop = asyncio.get_running_loop()
-        rows = await loop.run_in_executor(None, datastore.query, payload.sql)
+        # Keep DB access on app thread to avoid cross-thread DuckDB connection issues.
+        rows = datastore.query(payload.sql)
         return {"status": "success", "rows": rows}
     except Exception as e:
         return {"status": "error", "error": str(e)}
