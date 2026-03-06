@@ -120,16 +120,20 @@ Temperatures can be set globally (`LLM_TEMPERATURE`) or per role (`STRATEGY_TEMP
 
 ## Voice & Audio
 
-- TTS output uses `VOICE_TTS_BACKEND` (`pyttsx3`, `piper`, or `none`), with `VOICE_ENABLE_TTS=true|false`.
-- For local lightweight `piper` TTS, set:
-  - `VOICE_TTS_BACKEND=piper`
-  - `VOICE_PIPER_MODEL_PATH=...` (required)
-  - optional: `VOICE_PIPER_EXE`, `VOICE_PIPER_SPEAKER_ID`
-- Strictly local flow (no model downloads from app scripts):
+- TTS output uses `VOICE_TTS_BACKEND` (`pocket`, `piper`, `pyttsx3`, or `none`), with `VOICE_ENABLE_TTS=true|false`.
+- Recommended local high-quality setup is Pocket-TTS:
+  - `VOICE_TTS_BACKEND=pocket`
+  - `VOICE_POCKET_CONFIG_PATH=...` (required local YAML with local weight/tokenizer paths)
+  - `VOICE_POCKET_AUDIO_PROMPT_PATH=...` (required local `.wav` or `.safetensors`)
+  - optional: `VOICE_POCKET_DEVICE`, `VOICE_POCKET_TEMP`, `VOICE_POCKET_MAX_TOKENS`
+- Local fallback setup for Piper:
   1. Place your local Piper `.onnx` model (and `.onnx.json`) on disk.
   2. Run:
      `powershell -ExecutionPolicy Bypass -File .\configure_local_piper.ps1 -ModelPath "D:\path\voice.onnx"`
   3. Copy generated lines from `.env.piper.local` into `.env`.
-- Optional mic STT is supported via `VOICE_ENABLE_STT=true` and `VOICE_STT_BACKEND=speech_recognition`.
+- Optional mic STT is local Whisper via `VOICE_ENABLE_STT=true` and `VOICE_STT_BACKEND=whisper`.
+  - `VOICE_STT_WHISPER_MODEL_PATH` is required and must point to a local Faster-Whisper model directory (for example `large-v3` converted model files).
+  - optional: `VOICE_STT_WHISPER_DEVICE=cuda`, `VOICE_STT_WHISPER_COMPUTE_TYPE=float16`.
+- `VOICE_STT_BACKEND=parakeet` is reserved for upcoming integration and currently logs a clear not-wired warning.
 - Voice queue summarization now uses structured LLM output instead of manual JSON parsing.
 
