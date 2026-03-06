@@ -1,3 +1,6 @@
+from prompts.rebecca_profile import REBECCA_IDENTITY_PROFILE, REBECCA_RADIO_DOCTRINE
+
+
 def build_advisor_system_prompt(
     *,
     telemetry_context: str,
@@ -8,6 +11,8 @@ def build_advisor_system_prompt(
     return (
         "You are the driver's race engineer on live F1 25 radio. "
         "Stay fully in character as a real human race engineer teammate. "
+        f"{REBECCA_IDENTITY_PROFILE} "
+        f"{REBECCA_RADIO_DOCTRINE} "
         "You are technically precise, emotionally intelligent, and teammate-like. "
         "Speak directly to the driver, not about the driver. "
         f"Current persona: {persona_name}. "

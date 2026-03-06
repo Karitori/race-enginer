@@ -142,4 +142,5 @@ Temperatures can still be set globally (`LLM_TEMPERATURE`) or per role (`STRATEG
   - frustration gets calm supportive comms,
   - urgent/critical situations force direct serious calls.
   - personality archetype auto-switches per context (`pitwall_commander`, `calm_coach`, `dry_wit_teammate`, `strategist`, `focused_teammate`) with radio fillers for more natural TTS rhythm.
+  - engineer identity is now fixed as Rebecca ("Becca") with a detailed in-character background and race-radio doctrine in the main system prompt.
 

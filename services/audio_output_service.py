@@ -268,10 +268,6 @@ class AudioOutputService:
 
         if style == "warning":
             return text if text.endswith("!") else f"{text}!"
-        if style == "encouragement":
-            return text
-        if style == "strategy":
-            return text.replace(" now", " now, copy")
         return text
 
     async def speak(
