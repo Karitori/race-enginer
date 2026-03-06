@@ -25,6 +25,7 @@ Role-reflective file naming is now applied, for example:
 - `services/telemetry_mode_service.py`, `services/http_server_service.py`
 - `db/telemetry_store.py`, `db/telemetry_repository.py`
 - `tools/strategy_snapshot_tool.py`
+- `utils/f1_25_strategy_knowledge.py`
 
 All project source directories are kept flat (no nested source subdirectories).
 

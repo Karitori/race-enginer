@@ -3,7 +3,26 @@ from typing import Any, Awaitable, Callable, TypedDict
 
 from db.contracts import TelemetryRepository
 from tools.strategy_snapshot_tool import build_strategy_snapshot_tool
-from utils.telemetry_enums import TYRE_COMPOUND_NAMES
+from utils.f1_25_strategy_knowledge import (
+    AGGRESSIVE_OVERTAKE_GAP_MS,
+    CRITICAL_TIRE_WEAR_PCT,
+    DEGRADATION_RISING_PCT_PER_SAMPLE,
+    ERS_ATTACK_PCT,
+    ERS_LOW_PCT,
+    FUEL_CRITICAL_BUFFER_LAPS,
+    FUEL_LOW_BUFFER_LAPS,
+    HIGH_TIRE_WEAR_PCT,
+    OVERTAKE_GAP_MS,
+    PACE_DROP_ALERT_MS,
+    RAIN_ALERT_PCT,
+    RAIN_HEAVY_PCT,
+    RAIN_TO_INTERMEDIATE_PCT,
+    RAIN_TO_WET_PCT,
+    RAIN_TREND_ALERT_DELTA,
+    SAFETY_CAR_PIT_WEAR_THRESHOLD_PCT,
+    compound_name,
+    recommend_next_compound,
+)
 
 
 class TeamCall(TypedDict, total=False):
@@ -51,31 +70,6 @@ def _clamp_float(value: Any, low: float, high: float, fallback: float) -> float:
     except (TypeError, ValueError):
         return fallback
     return max(low, min(high, parsed))
-
-
-def _next_compound_code(current_compound: int, rain_pct: int, laps_remaining: int) -> int:
-    if rain_pct >= 75:
-        return 8  # Wet
-    if rain_pct >= 50:
-        return 7  # Intermediate
-
-    # Dry strategy heuristics aligned with F1-game style compounds.
-    if laps_remaining <= 12:
-        if current_compound in (18, 17):
-            return 16  # finish on Soft for late attack
-        return 17
-
-    if current_compound == 16:
-        return 18  # Soft -> Hard
-    if current_compound == 17:
-        return 18  # Medium -> Hard
-    if current_compound == 18:
-        return 17  # Hard -> Medium
-    return 17
-
-
-def _compound_name(compound_code: int) -> str:
-    return TYRE_COMPOUND_NAMES.get(compound_code, f"compound-{compound_code}")
 
 
 def _append_call(state: StrategyState, call: TeamCall) -> StrategyState:
@@ -126,14 +120,14 @@ def make_tire_wall_node():
         in_pit_window = bool(conditions.get("in_pit_window", False))
         laps_remaining = int(race.get("laps_remaining", 0))
 
-        next_compound_code = _next_compound_code(
+        next_compound_code = recommend_next_compound(
             current_compound=current_compound,
             rain_pct=rain_pct,
             laps_remaining=laps_remaining,
         )
-        next_compound = _compound_name(next_compound_code)
+        next_compound = compound_name(next_compound_code)
 
-        if wear_max >= 78:
+        if wear_max >= CRITICAL_TIRE_WEAR_PCT:
             return _append_call(
                 state,
                 {
@@ -147,7 +141,7 @@ def make_tire_wall_node():
                 },
             )
 
-        if wear_max >= 70 and in_pit_window:
+        if wear_max >= HIGH_TIRE_WEAR_PCT and in_pit_window:
             return _append_call(
                 state,
                 {
@@ -161,8 +155,10 @@ def make_tire_wall_node():
                 },
             )
 
-        if rain_pct >= 55 and current_compound in (16, 17, 18):
-            rain_compound = "Intermediates" if rain_pct < 75 else "Wets"
+        if rain_pct >= RAIN_ALERT_PCT and current_compound in (16, 17, 18):
+            rain_compound = (
+                "Intermediates" if rain_pct < RAIN_TO_WET_PCT else "Wets"
+            )
             return _append_call(
                 state,
                 {
@@ -176,7 +172,11 @@ def make_tire_wall_node():
                 },
             )
 
-        if tyre_age >= 20 and wear_rate >= 0.35 and in_pit_window:
+        if (
+            tyre_age >= 20
+            and wear_rate >= DEGRADATION_RISING_PCT_PER_SAMPLE
+            and in_pit_window
+        ):
             return _append_call(
                 state,
                 {
@@ -219,7 +219,7 @@ def make_energy_wall_node():
         ers_pct = float(energy.get("ers_pct", 0.0))
         gap_front_ms = int(race.get("gap_front_ms", 99999))
 
-        if laps_remaining > 0 and fuel_laps + 0.7 < laps_remaining:
+        if laps_remaining > 0 and fuel_laps + FUEL_CRITICAL_BUFFER_LAPS < laps_remaining:
             state = _append_call(
                 state,
                 {
@@ -234,7 +234,7 @@ def make_energy_wall_node():
                     "risk_tags": ["fuel_critical"],
                 },
             )
-        elif laps_remaining > 0 and fuel_laps + 1.8 < laps_remaining:
+        elif laps_remaining > 0 and fuel_laps + FUEL_LOW_BUFFER_LAPS < laps_remaining:
             state = _append_call(
                 state,
                 {
@@ -250,7 +250,7 @@ def make_energy_wall_node():
                 },
             )
 
-        if ers_pct <= 12:
+        if ers_pct <= ERS_LOW_PCT:
             return _append_call(
                 state,
                 {
@@ -264,7 +264,7 @@ def make_energy_wall_node():
                 },
             )
 
-        if ers_pct >= 65 and 0 < gap_front_ms <= 1300:
+        if ers_pct >= ERS_ATTACK_PCT and 0 < gap_front_ms <= OVERTAKE_GAP_MS:
             return _append_call(
                 state,
                 {
@@ -311,7 +311,7 @@ def make_race_control_node():
         wear_max = float(stint.get("wear_max_pct", 0.0))
 
         if safety_car_status > 0 or safety_car_recent:
-            if in_pit_window and wear_max >= 45:
+            if in_pit_window and wear_max >= SAFETY_CAR_PIT_WEAR_THRESHOLD_PCT:
                 return _append_call(
                     state,
                     {
@@ -337,7 +337,7 @@ def make_race_control_node():
                 },
             )
 
-        if rain_pct >= 70:
+        if rain_pct >= RAIN_HEAVY_PCT:
             return _append_call(
                 state,
                 {
@@ -351,7 +351,7 @@ def make_race_control_node():
                 },
             )
 
-        if rain_pct >= 50 or rain_trend >= 20:
+        if rain_pct >= RAIN_TO_INTERMEDIATE_PCT or rain_trend >= RAIN_TREND_ALERT_DELTA:
             return _append_call(
                 state,
                 {
@@ -394,7 +394,11 @@ def make_racecraft_node():
         fuel_laps = float(energy.get("fuel_laps_remaining", 0.0))
         laps_remaining = int(race.get("laps_remaining", 0))
 
-        if 0 < gap_front_ms <= 900 and ers_pct >= 25 and fuel_laps >= laps_remaining:
+        if (
+            0 < gap_front_ms <= AGGRESSIVE_OVERTAKE_GAP_MS
+            and ers_pct >= 25
+            and fuel_laps >= laps_remaining
+        ):
             return _append_call(
                 state,
                 {
@@ -408,7 +412,7 @@ def make_racecraft_node():
                 },
             )
 
-        if isinstance(pace_delta_ms, (int, float)) and pace_delta_ms > 350:
+        if isinstance(pace_delta_ms, (int, float)) and pace_delta_ms > PACE_DROP_ALERT_MS:
             return _append_call(
                 state,
                 {
@@ -551,4 +555,3 @@ def make_synthesize_decision_node(llm_runner: LLMRunner | None = None):
         }
 
     return _synthesize_decision_node
-
