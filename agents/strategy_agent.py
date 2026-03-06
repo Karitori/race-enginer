@@ -40,7 +40,7 @@ class StrategyAgent:
         self._last_signature: str | None = None
         self._last_publish_monotonic = 0.0
 
-        self._client = ChatClient(role="strategy", temperature=0.15)
+        self._client = ChatClient(role="strategy", temperature=0.5)
         self._llm_runner = self._build_llm_runner()
 
         graph = StateGraph(StrategyState)

@@ -20,8 +20,8 @@ def test_audio_input_disabled_by_default(monkeypatch):
 def test_audio_input_parakeet_disabled_without_local_model(monkeypatch):
     monkeypatch.setenv("VOICE_ENABLE_STT", "true")
     monkeypatch.setenv("VOICE_STT_BACKEND", "parakeet")
-    monkeypatch.setenv("VOICE_STT_PARAKEET_MODEL_PATH", "")
-    monkeypatch.setenv("VOICE_STT_MODEL_PATH", "")
+    monkeypatch.setenv("VOICE_STT_PARAKEET_MODEL_PATH", "Z:/missing/parakeet-tdt-0.6b-v3.nemo")
+    monkeypatch.setenv("VOICE_STT_MODEL_PATH", "Z:/missing/parakeet-tdt-0.6b-v3.nemo")
     service = AudioInputService()
     assert not service.available
 

@@ -28,8 +28,8 @@ class RaceEngineerAgent:
 
     def __init__(self, *, telemetry_provider: Any, thread_id: str):
         self._thread_id = thread_id
-        self._planner_client = ChatClient(role="advisor", temperature=0.0)
-        self._reply_client = ChatClient(role="advisor", temperature=0.25)
+        self._planner_client = ChatClient(role="advisor", temperature=0.6)
+        self._reply_client = ChatClient(role="advisor", temperature=0.6)
         set_telemetry_tool_provider(telemetry_provider)
         self._graph = self._build_graph()
 
