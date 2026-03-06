@@ -8,6 +8,7 @@ import wave
 from typing import Any
 
 logger = logging.getLogger(__name__)
+FORCED_KOKORO_VOICE = "af_sarah"
 
 
 def _parse_bool(raw: str | None, default: bool) -> bool:
@@ -103,17 +104,17 @@ class AudioOutputService:
 
         self._kokoro_model_path = (os.getenv("VOICE_KOKORO_MODEL_PATH", "") or "").strip()
         self._kokoro_voices_path = (os.getenv("VOICE_KOKORO_VOICES_PATH", "") or "").strip()
-        self._kokoro_voice = (os.getenv("VOICE_KOKORO_VOICE", "af_sarah") or "af_sarah").strip()
-        self._kokoro_voice_warning = (
-            os.getenv("VOICE_KOKORO_VOICE_WARNING", self._kokoro_voice) or self._kokoro_voice
-        ).strip()
-        self._kokoro_voice_strategy = (
-            os.getenv("VOICE_KOKORO_VOICE_STRATEGY", self._kokoro_voice) or self._kokoro_voice
-        ).strip()
-        self._kokoro_voice_encouragement = (
-            os.getenv("VOICE_KOKORO_VOICE_ENCOURAGEMENT", self._kokoro_voice)
-            or self._kokoro_voice
-        ).strip()
+        requested_voice = (os.getenv("VOICE_KOKORO_VOICE", FORCED_KOKORO_VOICE) or FORCED_KOKORO_VOICE).strip()
+        if requested_voice != FORCED_KOKORO_VOICE:
+            logger.warning(
+                "VOICE_KOKORO_VOICE=%s requested, forcing voice=%s for consistent comms.",
+                requested_voice,
+                FORCED_KOKORO_VOICE,
+            )
+        self._kokoro_voice = FORCED_KOKORO_VOICE
+        self._kokoro_voice_warning = FORCED_KOKORO_VOICE
+        self._kokoro_voice_strategy = FORCED_KOKORO_VOICE
+        self._kokoro_voice_encouragement = FORCED_KOKORO_VOICE
         self._kokoro_lang = (os.getenv("VOICE_KOKORO_LANG", "en-us") or "en-us").strip()
         self._kokoro_speed = _clamp_float(
             _parse_float(os.getenv("VOICE_KOKORO_SPEED"), 1.15), 0.5, 2.0
@@ -222,13 +223,19 @@ class AudioOutputService:
             style = "warning"
 
         if style == "warning":
-            if not text.endswith("!"):
-                return f"{text}!"
-            return text
+            if not text.lower().startswith(("listen", "right now", "no delay")):
+                text = f"Listen, {text}"
+            return text if text.endswith("!") else f"{text}!"
         if style == "encouragement":
-            return f"Great job. {text}" if not text.lower().startswith("great job") else text
+            if text.lower().startswith(("great job", "nice", "good")):
+                return text
+            return f"Nice one, {text}"
         if style == "strategy":
+            if not text.lower().startswith(("copy", "understood", "right")):
+                text = f"Copy, {text}"
             return text.replace(" now", " now, copy")
+        if not text.lower().startswith(("okay", "copy", "right")):
+            return f"Okay, {text}"
         return text
 
     async def speak(

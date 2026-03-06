@@ -3,7 +3,12 @@ import asyncio
 import pytest
 
 from services.audio_input_service import AudioInputService
-from services.audio_output_service import AudioOutputService, _parse_style_hint, _prepare_tts_text
+from services.audio_output_service import (
+    AudioOutputService,
+    FORCED_KOKORO_VOICE,
+    _parse_style_hint,
+    _prepare_tts_text,
+)
 
 
 def test_audio_input_disabled_by_default(monkeypatch):
@@ -138,6 +143,15 @@ def test_kokoro_profile_uses_warning_speed_for_critical(monkeypatch):
     service = AudioOutputService()
     _voice, speed = service._resolve_kokoro_profile(style_hint="info", priority=5)
     assert speed == service._kokoro_speed_warning
+
+
+def test_kokoro_voice_forced_to_sarah(monkeypatch):
+    monkeypatch.setenv("VOICE_ENABLE_TTS", "false")
+    monkeypatch.setenv("VOICE_KOKORO_VOICE", "am_michael")
+    service = AudioOutputService()
+    warning_voice, _ = service._resolve_kokoro_profile(style_hint="warning", priority=5)
+    assert service._kokoro_voice == FORCED_KOKORO_VOICE
+    assert warning_voice == FORCED_KOKORO_VOICE
 
 
 def test_apply_expressive_format_adds_urgency(monkeypatch):

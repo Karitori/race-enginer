@@ -1,6 +1,13 @@
 from typing import Literal
 
 DriverTone = Literal["banter", "frustrated", "urgent", "neutral"]
+EngineerPersona = Literal[
+    "pitwall_commander",
+    "calm_coach",
+    "dry_wit_teammate",
+    "strategist",
+    "focused_teammate",
+]
 
 _BANTER_MARKERS = (
     "haha",
@@ -35,6 +42,14 @@ _URGENCY_MARKERS = (
     "puncture",
 )
 
+_PERSONA_OPENERS: dict[EngineerPersona, tuple[str, ...]] = {
+    "pitwall_commander": ("Listen,", "Right now,", "No delay,"),
+    "calm_coach": ("Okay, breathe,", "Stay with me,", "All right, reset,"),
+    "dry_wit_teammate": ("Good one,", "Comedy later,", "Nice banter,"),
+    "strategist": ("Copy,", "Understood,", "Right,"),
+    "focused_teammate": ("Okay,", "Copy that,", "Right then,"),
+}
+
 
 def detect_driver_tone(query: str) -> DriverTone:
     text = (query or "").strip().lower()
@@ -58,6 +73,81 @@ def next_rapport_level(current: int, tone: DriverTone) -> int:
     if tone in {"urgent", "frustrated"}:
         return max(0, level - 1)
     return level
+
+
+def choose_engineer_persona(
+    tone: DriverTone,
+    *,
+    rapport_level: int,
+    strategy_criticality: int | None,
+    speed_kph: float | None,
+    lap: int | None,
+) -> EngineerPersona:
+    """Automatically select a race engineer personality from race context."""
+    critical = strategy_criticality is not None and strategy_criticality >= 4
+    if critical or tone == "urgent":
+        return "pitwall_commander"
+    if tone == "frustrated":
+        return "calm_coach"
+    if tone == "banter" and rapport_level >= 2:
+        return "dry_wit_teammate"
+    if strategy_criticality is not None and strategy_criticality >= 3:
+        return "strategist"
+    if lap is not None and lap <= 2:
+        return "strategist"
+    if speed_kph is not None and speed_kph >= 290:
+        return "strategist"
+    return "focused_teammate"
+
+
+def persona_instruction(persona: EngineerPersona) -> str:
+    if persona == "pitwall_commander":
+        return (
+            "Persona: pit wall commander. Crisp, authoritative calls. "
+            "No fluff, no jokes, immediate execution language."
+        )
+    if persona == "calm_coach":
+        return (
+            "Persona: calm coach. Keep the driver composed under pressure with short, steady language."
+        )
+    if persona == "dry_wit_teammate":
+        return (
+            "Persona: dry-wit teammate. Light witty acknowledgement allowed, then immediate race action."
+        )
+    if persona == "strategist":
+        return (
+            "Persona: strategist. Tactical and precise, still concise and radio-natural."
+        )
+    return (
+        "Persona: focused teammate. Human, direct, and confident with practical race-radio rhythm."
+    )
+
+
+def apply_persona_fillers(
+    text: str,
+    *,
+    persona: EngineerPersona,
+    tone: DriverTone,
+    strategy_critical: bool,
+    rapport_level: int,
+) -> str:
+    """Add small radio fillers to improve TTS rhythm and realism."""
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return cleaned
+
+    lowered = cleaned.lower()
+    if lowered.startswith(
+        ("copy", "okay", "right", "listen", "understood", "stay with me", "no delay")
+    ):
+        return cleaned
+
+    chosen_persona: EngineerPersona = (
+        "pitwall_commander" if strategy_critical or tone == "urgent" else persona
+    )
+    options = _PERSONA_OPENERS.get(chosen_persona, _PERSONA_OPENERS["focused_teammate"])
+    opener = options[(rapport_level + len(cleaned)) % len(options)]
+    return f"{opener} {cleaned}"
 
 
 def tone_instruction(
@@ -88,4 +178,3 @@ def tone_instruction(
     return (
         "Tone mode: composed teammate. Sound human and direct, with concise race-radio phrasing."
     )
-

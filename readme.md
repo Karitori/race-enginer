@@ -120,8 +120,9 @@ Temperatures can still be set globally (`LLM_TEMPERATURE`) or per role (`STRATEG
   - `VOICE_TTS_BACKEND=kokoro`
   - `VOICE_KOKORO_MODEL_PATH=...` (required local `.onnx`)
   - `VOICE_KOKORO_VOICES_PATH=...` (required local voices `.bin`)
-  - optional: `VOICE_KOKORO_VOICE`, `VOICE_KOKORO_LANG`, `VOICE_KOKORO_SPEED`, `VOICE_TTS_MAX_CHARS`
-  - expressive radio tuning: `VOICE_KOKORO_EXPRESSIVE=true` plus optional per-style voice/speed envs (`VOICE_KOKORO_VOICE_WARNING`, `VOICE_KOKORO_SPEED_WARNING`, etc.)
+  - voice is now forced to `af_sarah` for consistency across all comms.
+  - optional: `VOICE_KOKORO_LANG`, `VOICE_KOKORO_SPEED`, `VOICE_TTS_MAX_CHARS`
+  - expressive radio tuning: `VOICE_KOKORO_EXPRESSIVE=true` plus optional per-style speed envs (`VOICE_KOKORO_SPEED_WARNING`, etc.)
 - Optional mic STT is locked to Whisper Turbo via `VOICE_ENABLE_STT=true` and `VOICE_STT_BACKEND=whisper`.
   - `VOICE_STT_WHISPER_MODEL=turbo` (or a local Turbo model path)
   - optional: `VOICE_STT_WHISPER_DEVICE=cuda`, `VOICE_STT_WHISPER_COMPUTE_TYPE=float16`.
@@ -138,4 +139,5 @@ Temperatures can still be set globally (`LLM_TEMPERATURE`) or per role (`STRATEG
   - banter receives light teammate-style wit,
   - frustration gets calm supportive comms,
   - urgent/critical situations force direct serious calls.
+  - personality archetype auto-switches per context (`pitwall_commander`, `calm_coach`, `dry_wit_teammate`, `strategist`, `focused_teammate`) with radio fillers for more natural TTS rhythm.
 
