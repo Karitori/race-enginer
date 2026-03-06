@@ -1,4 +1,5 @@
 import logging
+from collections import deque
 from typing import Optional
 
 from models.strategy import StrategyInsight
@@ -38,6 +39,8 @@ class RaceEngineerService:
         self.client = ChatClient(role="advisor", temperature=0.3)
         self._rapport_level = 1
         self._active_persona = "focused_teammate"
+        self._conversation_history: deque[str] = deque(maxlen=12)
+        self._driver_preference = "standard"
 
         # State tracking (legacy)
         self.latest_telemetry: Optional[TelemetryTick] = None
@@ -99,6 +102,54 @@ class RaceEngineerService:
             player_idx=self._player_idx,
         )
 
+    def _record_radio_line(self, speaker: str, text: str) -> None:
+        cleaned = (text or "").strip()
+        if not cleaned:
+            return
+        line = f"{speaker}: {cleaned}"
+        if self._conversation_history:
+            last_line = self._conversation_history[-1]
+            if line.lower() == last_line.lower():
+                return
+            _, _, last_text = last_line.partition(":")
+            if cleaned.lower() == last_text.strip().lower():
+                return
+        self._conversation_history.append(line)
+
+    def _build_radio_history_context(self) -> str:
+        if not self._conversation_history:
+            return "No prior exchanges."
+        return "\n".join(self._conversation_history)
+
+    def _build_driver_prompt(self, driver_query: str) -> str:
+        return (
+            f"Driver latest message: {driver_query}\n\n"
+            "Conversation memory (most recent at bottom):\n"
+            f"{self._build_radio_history_context()}\n\n"
+            "Reply as Becca on live race radio."
+        )
+
+    def _update_driver_preference(self, query_text: str) -> None:
+        lowered = (query_text or "").strip().lower()
+        if not lowered:
+            return
+        if any(token in lowered for token in ("dumb it down", "simpler", "simple terms", "keep it simple")):
+            self._driver_preference = "simple"
+            return
+        if any(token in lowered for token in ("more detail", "explain deeper", "full detail")):
+            self._driver_preference = "detailed"
+
+    def _driver_preference_instruction(self) -> str:
+        if self._driver_preference == "simple":
+            return (
+                "Driver preference: keep technical explanations simple and plain language until they ask for more detail."
+            )
+        if self._driver_preference == "detailed":
+            return (
+                "Driver preference: provide slightly more technical detail when giving strategy or setup guidance."
+            )
+        return "Driver preference: standard race-radio clarity."
+
     async def _rewrite_in_character(
         self,
         *,
@@ -106,6 +157,7 @@ class RaceEngineerService:
         driver_query: str,
         persona: str,
         tone_instruction_text: str,
+        conversation_context: str,
     ) -> str | None:
         """Prompt-driven rewrite pass when response drifts out of character."""
         if not self.client.available:
@@ -117,10 +169,12 @@ class RaceEngineerService:
             "Never mention AI/model/policy limitations or inability statements. "
             "Return plain text only in 1-2 short radio sentences, direct to the driver. "
             f"Persona: {persona}. "
-            f"{tone_instruction_text}"
+            f"{tone_instruction_text} "
+            "This is an ongoing conversation; do not reset with greetings."
         )
         rewrite_user_prompt = (
             f"Driver message: {driver_query}\n"
+            f"Conversation memory:\n{conversation_context}\n\n"
             f"Draft answer to fix:\n{draft_answer}\n\n"
             "Rewrite the draft so it sounds natural, in-character, and useful."
         )
@@ -135,10 +189,14 @@ class RaceEngineerService:
     async def _handle_query(self, query: DriverQuery):
         """When the driver asks a question, consult configured LLM using full context."""
         logger.info(f"LLM Advisor received query: '{query.query}'")
+        self._record_radio_line("Driver", query.query)
+        self._update_driver_preference(query.query)
 
         if not self.latest_telemetry:
             await self._send_insight(
-                "I don't have any telemetry data yet. Stand by.", "info"
+                "I don't have any telemetry data yet. Stand by.",
+                "info",
+                record_dialogue=True,
             )
             return
 
@@ -179,6 +237,7 @@ class RaceEngineerService:
             await self._send_insight(
                 to_radio_brief(fallback_msg, max_sentences=2, max_chars=150),
                 "info",
+                record_dialogue=True,
             )
             return
 
@@ -187,10 +246,13 @@ class RaceEngineerService:
             persona_name=persona.replace("_", " "),
             persona_instruction=persona_instruction(persona),
             tone_instruction=style_instruction,
+            conversation_context=self._build_radio_history_context(),
+            driver_preference_instruction=self._driver_preference_instruction(),
         )
+        user_prompt = self._build_driver_prompt(query.query)
 
         try:
-            answer = await self.client.generate_text(system_prompt, query.query)
+            answer = await self.client.generate_text(system_prompt, user_prompt)
             if answer:
                 brief_answer = to_radio_brief(
                     answer,
@@ -207,11 +269,12 @@ class RaceEngineerService:
                             driver_query=query.query,
                             persona=persona.replace("_", " "),
                             tone_instruction_text=style_instruction,
+                            conversation_context=self._build_radio_history_context(),
                         )
                         brief_answer = (
                             rewritten
                             if rewritten
-                            else "Copy. I'm with you. Ask me what you need right now."
+                            else "Copy. I'm with you. Keep the call coming."
                         )
 
                     styled_answer = apply_persona_fillers(
@@ -228,16 +291,33 @@ class RaceEngineerService:
                     )
                     insight_type = "warning" if strategy_critical or detected_tone == "urgent" else "info"
                     priority = 5 if strategy_critical or detected_tone == "urgent" else 4
-                    await self._send_insight(styled_answer, insight_type, priority=priority)
+                    await self._send_insight(
+                        styled_answer,
+                        insight_type,
+                        priority=priority,
+                        record_dialogue=True,
+                    )
 
         except Exception as e:
             logger.error(f"Failed to generate advisor response: {e}")
             await self._send_insight(
-                "I'm having trouble with the data connection.", "warning", priority=5
+                "I'm having trouble with the data connection.",
+                "warning",
+                priority=5,
+                record_dialogue=True,
             )
 
-    async def _send_insight(self, message: str, insight_type: str, priority: int = 3):
+    async def _send_insight(
+        self,
+        message: str,
+        insight_type: str,
+        priority: int = 3,
+        *,
+        record_dialogue: bool = False,
+    ):
         insight = DrivingInsight(message=message, type=insight_type, priority=priority)
+        if record_dialogue:
+            self._record_radio_line("Becca", message)
         await bus.publish("driving_insight", insight)
 
 

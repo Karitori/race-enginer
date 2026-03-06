@@ -15,3 +15,7 @@ def test_accepts_normal_engineer_line():
     text = "Copy, box this lap and protect the fronts in sector three."
     assert is_out_of_character_response(text) is False
 
+
+def test_detects_support_desk_prompt_language():
+    text = "Sure thing. What can I do for you today?"
+    assert is_out_of_character_response(text) is True

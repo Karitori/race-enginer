@@ -15,8 +15,17 @@ _OUT_OF_CHARACTER_PATTERNS = (
     r"\bpersonal matters\b",
     r"\bi do not have\b",
     r"\bi don't have\b",
-    r"\bhow can i assist you today\b",
+    r"\bhow can i assist(?: you)?(?: today)?\b",
+    r"\bhow can i help(?: you)?(?: today)?\b",
+    r"\bwhat do you need help with\b",
+    r"\bwhat can i do for you\b",
+    r"\bwhat do you need from me\b",
+    r"\bmy current focus is\b",
     r"\bi'?m doing well,?\s*thanks for asking\b",
+    r"\bi'?m doing well,?\s*thank you\b",
+    r"\bi'?m sorry,?\s*but i cannot\b",
+    r"\bsure thing\b",
+    r"\bi can help with that\b",
 )
 
 
