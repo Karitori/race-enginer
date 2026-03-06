@@ -15,6 +15,9 @@ class TelemetryToolProvider(Protocol):
     def get_health_snapshot(self) -> dict[str, Any]:
         ...
 
+    def get_full_telemetry_snapshot(self) -> dict[str, Any]:
+        ...
+
 
 _provider: TelemetryToolProvider | None = None
 
@@ -48,6 +51,16 @@ def telemetry_health() -> dict[str, Any]:
     return _require_provider().get_health_snapshot()
 
 
-def get_engineer_tools() -> list[Any]:
-    return [telemetry_gap, telemetry_car_state, telemetry_health]
+@tool("telemetry_full_snapshot")
+def telemetry_full_snapshot() -> dict[str, Any]:
+    """Return a full multi-packet telemetry snapshot for the player car and session."""
+    return _require_provider().get_full_telemetry_snapshot()
 
+
+def get_engineer_tools() -> list[Any]:
+    return [
+        telemetry_gap,
+        telemetry_car_state,
+        telemetry_health,
+        telemetry_full_snapshot,
+    ]

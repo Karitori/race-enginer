@@ -63,6 +63,13 @@ def collect_strategy_snapshot(repository: TelemetryRepository) -> dict[str, Any]
         ORDER BY timestamp DESC LIMIT 25
         """
     )
+    packet_rows = repository.query(
+        """
+        SELECT packet_id, packet_name
+        FROM raw_packets
+        ORDER BY timestamp DESC LIMIT 400
+        """
+    )
 
     latest_wear = first_or_none(wear_rows)
     latest_status = first_or_none(status_rows)
@@ -101,6 +108,15 @@ def collect_strategy_snapshot(repository: TelemetryRepository) -> dict[str, Any]
     event_codes = [_to_int(r[0], default=-1) if isinstance(r[0], int) else str(r[0]) for r in event_rows]
     recent_event_codes = [str(code) for code in event_codes if str(code)]
     safety_car_recent = any(code == "SAFC" for code in recent_event_codes)
+    packet_ids_seen: list[int] = []
+    packet_names_seen: list[str] = []
+    for packet_row in packet_rows:
+        packet_id = _to_int(packet_row[0], default=-1)
+        packet_name = str(packet_row[1] or "")
+        if packet_id >= 0 and packet_id not in packet_ids_seen:
+            packet_ids_seen.append(packet_id)
+        if packet_name and packet_name not in packet_names_seen:
+            packet_names_seen.append(packet_name)
 
     if not latest_wear or not latest_status or not latest_lap or not latest_session:
         return {"ready": False}
@@ -195,6 +211,11 @@ def collect_strategy_snapshot(repository: TelemetryRepository) -> dict[str, Any]
         "signals": {
             "recent_event_codes": recent_event_codes,
             "safety_car_recent": safety_car_recent,
+        },
+        "telemetry_coverage": {
+            "packet_ids_seen_recently": packet_ids_seen,
+            "packet_names_seen_recently": packet_names_seen,
+            "full_surface_active": all(packet_id in packet_ids_seen for packet_id in range(16)),
         },
     }
 

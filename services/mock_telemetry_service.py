@@ -31,6 +31,13 @@ from models.telemetry_packets import (
     TyreSetData,
     PacketTyreSetsData,
     PacketMotionExData,
+    FinalClassification,
+    PacketFinalClassificationData,
+    LobbyInfo,
+    PacketLobbyInfoData,
+    TimeTrialDataSet,
+    PacketTimeTrialData,
+    PacketLapPositions,
 )
 from services.event_bus_service import bus
 from utils.telemetry_enums import (
@@ -198,6 +205,13 @@ class BaseTelemetryParser:
                 await self._emit_participants()
                 await self._emit_car_setup()
                 await self._emit_tyre_sets()
+                await self._emit_lobby_info()
+                await self._emit_time_trial()
+                await self._emit_final_classification()
+
+            # 1Hz: lap positions timeline
+            if tick_count % 20 == 0:
+                await self._emit_lap_positions()
 
             # Lights out event at the start
             if not self._lights_out_sent and tick_count == 20:
@@ -920,5 +934,120 @@ class BaseTelemetryParser:
             ],
         )
         await bus.publish("packet_session_history", packet)
+
+    async def _emit_final_classification(self):
+        """Packet 8: Final Classification - periodic mock standings snapshot."""
+        classification: list[FinalClassification] = []
+        player_pos = self._car_positions[self._player_idx]
+        for idx in range(self._num_cars):
+            pos = max(1, min(20, self._car_positions[idx]))
+            finished_fraction = max(0.0, min(1.0, self._lap / max(1, self._total_laps)))
+            laps_done = int(finished_fraction * self._total_laps)
+            classification.append(
+                FinalClassification(
+                    position=pos,
+                    num_laps=laps_done,
+                    grid_position=idx + 1,
+                    points=max(0, 26 - pos),
+                    num_pit_stops=1 if self._has_pitted else 0,
+                    result_status=2,
+                    best_lap_time_in_ms=self._best_lap_time or random.randint(86000, 93000),
+                    total_race_time=float(laps_done * 90.0),
+                    num_tyre_stints=2 if self._has_pitted else 1,
+                    tyre_stints_actual=[int(self._tyre_compound)],
+                    tyre_stints_visual=[int(self._tyre_visual)],
+                    tyre_stints_end_laps=[self._lap],
+                )
+            )
+
+        packet = PacketFinalClassificationData(
+            header=self._make_header(8),
+            num_cars=self._num_cars,
+            classification_data=classification,
+        )
+        await bus.publish("packet_final_classification", packet)
+        if player_pos == 1 and random.random() < 0.05:
+            await self._emit_event(EventCode.FASTEST_LAP, vehicle_idx=self._player_idx, lap_time=(self._best_lap_time or 89000) / 1000.0)
+
+    async def _emit_lobby_info(self):
+        """Packet 9: Lobby Info - mock player list and ready states."""
+        players: list[LobbyInfo] = []
+        for i, driver in enumerate(AI_DRIVERS[: self._num_cars]):
+            players.append(
+                LobbyInfo(
+                    ai_controlled=0 if i == self._player_idx else 1,
+                    team_id=driver["team_id"],
+                    nationality=driver["nationality"],
+                    platform=1,
+                    name=driver["name"],
+                    car_number=driver["race_number"],
+                    ready_status=2,
+                )
+            )
+        packet = PacketLobbyInfoData(
+            header=self._make_header(9),
+            num_players=len(players),
+            lobby_players=players,
+        )
+        await bus.publish("packet_lobby_info", packet)
+
+    async def _emit_time_trial(self):
+        """Packet 14: Time Trial - mock best lap datasets."""
+        lap_ms = self._best_lap_time or random.randint(87000, 93000)
+        player = TimeTrialDataSet(
+            car_idx=self._player_idx,
+            team_id=AI_DRIVERS[self._player_idx]["team_id"],
+            lap_time_in_ms=lap_ms,
+            sector1_time_in_ms=max(1, int(lap_ms * 0.31)),
+            sector2_time_in_ms=max(1, int(lap_ms * 0.38)),
+            sector3_time_in_ms=max(1, int(lap_ms * 0.31)),
+            traction_control=0,
+            gearbox_assist=0,
+            anti_lock_brakes=0,
+            equal_car_performance=1,
+            custom_setup=1,
+            valid=1,
+        )
+        personal = TimeTrialDataSet(
+            car_idx=self._player_idx,
+            team_id=AI_DRIVERS[self._player_idx]["team_id"],
+            lap_time_in_ms=max(1, lap_ms + random.randint(100, 600)),
+            sector1_time_in_ms=max(1, int(lap_ms * 0.31)),
+            sector2_time_in_ms=max(1, int(lap_ms * 0.38)),
+            sector3_time_in_ms=max(1, int(lap_ms * 0.31)),
+            valid=1,
+        )
+        rival_idx = min(len(AI_DRIVERS) - 1, max(1, self._player_idx + 1))
+        rival = TimeTrialDataSet(
+            car_idx=rival_idx,
+            team_id=AI_DRIVERS[rival_idx]["team_id"],
+            lap_time_in_ms=max(1, lap_ms - random.randint(80, 450)),
+            sector1_time_in_ms=max(1, int(lap_ms * 0.31)),
+            sector2_time_in_ms=max(1, int(lap_ms * 0.38)),
+            sector3_time_in_ms=max(1, int(lap_ms * 0.31)),
+            valid=1,
+        )
+        packet = PacketTimeTrialData(
+            header=self._make_header(14),
+            player_session=player,
+            personal_best=personal,
+            rival=rival,
+        )
+        await bus.publish("packet_time_trial", packet)
+
+    async def _emit_lap_positions(self):
+        """Packet 15: Lap Positions - rolling position matrix."""
+        history_rows = min(50, max(1, len(self._lap_history) + 1))
+        matrix: list[list[int]] = []
+        current_positions = self._car_positions[:22] + [22] * max(0, 22 - len(self._car_positions))
+        for _ in range(history_rows):
+            matrix.append([int(max(1, min(22, p))) for p in current_positions[:22]])
+        packet = PacketLapPositions(
+            header=self._make_header(15),
+            num_laps=history_rows,
+            lap_start=max(1, self._lap - history_rows + 1),
+            position_for_vehicle_idx=matrix,
+        )
+        await bus.publish("packet_lap_positions", packet)
 
 

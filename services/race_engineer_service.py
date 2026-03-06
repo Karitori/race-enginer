@@ -8,15 +8,26 @@ from models.engineer_agent import EngineerReply
 from models.strategy import StrategyInsight
 from models.telemetry import TelemetryTick, DriverQuery, DrivingInsight
 from models.telemetry_packets import (
+    PacketMotionData,
     PacketCarStatusData,
     PacketCarDamageData,
     PacketSessionData,
     PacketLapData,
+    PacketEventData,
+    PacketParticipantsData,
+    PacketCarSetupData,
     PacketCarTelemetryData,
+    PacketFinalClassificationData,
+    PacketLobbyInfoData,
+    PacketSessionHistoryData,
+    PacketTyreSetsData,
+    PacketMotionExData,
+    PacketTimeTrialData,
+    PacketLapPositions,
 )
 from services.event_bus_service import bus
 from services.llm_factory import ChatClient
-from utils.telemetry_enums import TYRE_COMPOUND_SHORT
+from utils.telemetry_enums import TYRE_COMPOUND_SHORT, WEATHER_NAMES, SESSION_TYPE_NAMES, TRACK_NAMES
 from utils.radio_character_guard import is_out_of_character_response
 from utils.radio_context import build_radio_context
 from utils.radio_personality import (
@@ -60,6 +71,18 @@ class RaceEngineerService:
         self._session: Optional[PacketSessionData] = None
         self._lap_data: Optional[PacketLapData] = None
         self._car_telemetry: Optional[PacketCarTelemetryData] = None
+        self._motion: Optional[PacketMotionData] = None
+        self._event: Optional[PacketEventData] = None
+        self._participants: Optional[PacketParticipantsData] = None
+        self._car_setup: Optional[PacketCarSetupData] = None
+        self._final_classification: Optional[PacketFinalClassificationData] = None
+        self._lobby_info: Optional[PacketLobbyInfoData] = None
+        self._session_history: dict[int, PacketSessionHistoryData] = {}
+        self._tyre_sets: Optional[PacketTyreSetsData] = None
+        self._motion_ex: Optional[PacketMotionExData] = None
+        self._time_trial: Optional[PacketTimeTrialData] = None
+        self._lap_positions: Optional[PacketLapPositions] = None
+        self._event_log: deque[PacketEventData] = deque(maxlen=50)
         self._player_idx: int = 0
 
         # Subscribe to data
@@ -71,6 +94,17 @@ class RaceEngineerService:
         bus.subscribe("packet_session", self._update_session)
         bus.subscribe("packet_lap_data", self._update_lap_data)
         bus.subscribe("packet_car_telemetry", self._update_car_telemetry)
+        bus.subscribe("packet_motion", self._update_motion)
+        bus.subscribe("packet_event", self._update_event)
+        bus.subscribe("packet_participants", self._update_participants)
+        bus.subscribe("packet_car_setup", self._update_car_setup)
+        bus.subscribe("packet_final_classification", self._update_final_classification)
+        bus.subscribe("packet_lobby_info", self._update_lobby_info)
+        bus.subscribe("packet_session_history", self._update_session_history)
+        bus.subscribe("packet_tyre_sets", self._update_tyre_sets)
+        bus.subscribe("packet_motion_ex", self._update_motion_ex)
+        bus.subscribe("packet_time_trial", self._update_time_trial)
+        bus.subscribe("packet_lap_positions", self._update_lap_positions)
 
     async def _update_telemetry(self, tick: TelemetryTick):
         self.latest_telemetry = tick
@@ -102,6 +136,40 @@ class RaceEngineerService:
 
     async def _update_car_telemetry(self, data: PacketCarTelemetryData):
         self._car_telemetry = data
+
+    async def _update_motion(self, data: PacketMotionData):
+        self._motion = data
+
+    async def _update_event(self, data: PacketEventData):
+        self._event = data
+        self._event_log.append(data)
+
+    async def _update_participants(self, data: PacketParticipantsData):
+        self._participants = data
+
+    async def _update_car_setup(self, data: PacketCarSetupData):
+        self._car_setup = data
+
+    async def _update_final_classification(self, data: PacketFinalClassificationData):
+        self._final_classification = data
+
+    async def _update_lobby_info(self, data: PacketLobbyInfoData):
+        self._lobby_info = data
+
+    async def _update_session_history(self, data: PacketSessionHistoryData):
+        self._session_history[data.car_idx] = data
+
+    async def _update_tyre_sets(self, data: PacketTyreSetsData):
+        self._tyre_sets = data
+
+    async def _update_motion_ex(self, data: PacketMotionExData):
+        self._motion_ex = data
+
+    async def _update_time_trial(self, data: PacketTimeTrialData):
+        self._time_trial = data
+
+    async def _update_lap_positions(self, data: PacketLapPositions):
+        self._lap_positions = data
 
     def _build_context(self) -> str:
         """Build a rich context string from all available data."""
@@ -204,6 +272,242 @@ class RaceEngineerService:
             "max_tire_surface_temp_c": max_tire,
             "max_damage_component": max_damage_component,
             "max_damage_pct": max_damage,
+        }
+
+    def _participant_name(self, index: int) -> str | None:
+        if self._participants is None:
+            return None
+        participant = self._safe_indexed(self._participants.participants, index)
+        if participant is None:
+            return None
+        name = (participant.name or "").strip()
+        return name or None
+
+    def get_full_telemetry_snapshot(self) -> dict[str, Any]:
+        """Expose all available telemetry packet families for agent tools."""
+        gap = self.get_gap_snapshot()
+        car_state = self.get_car_state_snapshot()
+        health = self.get_health_snapshot()
+
+        session_payload: dict[str, Any] = {}
+        if self._session is not None:
+            session_payload = {
+                "weather_code": self._session.weather,
+                "weather": WEATHER_NAMES.get(self._session.weather, str(self._session.weather)),
+                "track_temperature_c": self._session.track_temperature,
+                "air_temperature_c": self._session.air_temperature,
+                "rain_percentage": (
+                    self._session.weather_forecast_samples[0].rain_percentage
+                    if self._session.weather_forecast_samples
+                    else 0
+                ),
+                "total_laps": self._session.total_laps,
+                "session_type_code": self._session.session_type,
+                "session_type": SESSION_TYPE_NAMES.get(
+                    self._session.session_type,
+                    str(self._session.session_type),
+                ),
+                "track_id": self._session.track_id,
+                "track": TRACK_NAMES.get(self._session.track_id, str(self._session.track_id)),
+                "safety_car_status": self._session.safety_car_status,
+                "pit_window_ideal_lap": self._session.pit_stop_window_ideal_lap,
+                "pit_window_latest_lap": self._session.pit_stop_window_latest_lap,
+            }
+
+        setup_payload: dict[str, Any] = {}
+        if self._car_setup is not None:
+            setup = self._safe_indexed(self._car_setup.car_setups, self._player_idx)
+            if setup is not None:
+                setup_payload = {
+                    "front_wing": setup.front_wing,
+                    "rear_wing": setup.rear_wing,
+                    "on_throttle_diff": setup.on_throttle,
+                    "off_throttle_diff": setup.off_throttle,
+                    "brake_bias": setup.brake_bias,
+                    "brake_pressure": setup.brake_pressure,
+                    "front_suspension": setup.front_suspension,
+                    "rear_suspension": setup.rear_suspension,
+                    "fuel_load": setup.fuel_load,
+                }
+
+        motion_payload: dict[str, Any] = {}
+        if self._motion is not None:
+            motion = self._safe_indexed(self._motion.car_motion_data, self._player_idx)
+            if motion is not None:
+                motion_payload = {
+                    "world_position": [
+                        motion.world_position_x,
+                        motion.world_position_y,
+                        motion.world_position_z,
+                    ],
+                    "world_velocity": [
+                        motion.world_velocity_x,
+                        motion.world_velocity_y,
+                        motion.world_velocity_z,
+                    ],
+                    "g_force_lateral": motion.g_force_lateral,
+                    "g_force_longitudinal": motion.g_force_longitudinal,
+                    "g_force_vertical": motion.g_force_vertical,
+                    "yaw": motion.yaw,
+                    "pitch": motion.pitch,
+                    "roll": motion.roll,
+                }
+
+        motion_ex_payload: dict[str, Any] = {}
+        if self._motion_ex is not None:
+            motion_ex_payload = {
+                "front_wheels_angle": self._motion_ex.front_wheels_angle,
+                "local_velocity": [
+                    self._motion_ex.local_velocity_x,
+                    self._motion_ex.local_velocity_y,
+                    self._motion_ex.local_velocity_z,
+                ],
+                "wheel_speed": self._motion_ex.wheel_speed,
+                "wheel_slip_ratio": self._motion_ex.wheel_slip_ratio,
+                "wheel_slip_angle": self._motion_ex.wheel_slip_angle,
+                "wheel_lat_force": self._motion_ex.wheel_lat_force,
+                "wheel_long_force": self._motion_ex.wheel_long_force,
+                "wheel_vert_force": self._motion_ex.wheel_vert_force,
+            }
+
+        participants_payload: dict[str, Any] = {}
+        if self._participants is not None and self._lap_data is not None:
+            lap = self._safe_indexed(self._lap_data.car_lap_data, self._player_idx)
+            ahead_name: str | None = None
+            behind_name: str | None = None
+            if lap is not None:
+                player_position = lap.car_position
+                for idx, other_lap in enumerate(self._lap_data.car_lap_data):
+                    if other_lap.car_position == player_position - 1:
+                        ahead_name = self._participant_name(idx)
+                    if other_lap.car_position == player_position + 1:
+                        behind_name = self._participant_name(idx)
+            player_name = self._participant_name(self._player_idx)
+            participants_payload = {
+                "num_active_cars": self._participants.num_active_cars,
+                "player_name": player_name,
+                "ahead_driver": ahead_name,
+                "behind_driver": behind_name,
+            }
+
+        events_payload = {
+            "latest_code": self._event.event_string_code if self._event is not None else None,
+            "recent_codes": [event.event_string_code for event in list(self._event_log)[-8:]],
+        }
+
+        history_payload: dict[str, Any] = {}
+        player_history = self._session_history.get(self._player_idx)
+        if player_history is not None:
+            best_lap_ms = None
+            if player_history.best_lap_time_lap_num > 0:
+                best_idx = player_history.best_lap_time_lap_num - 1
+                best_lap = self._safe_indexed(player_history.lap_history_data, best_idx)
+                if best_lap is not None:
+                    best_lap_ms = best_lap.lap_time_in_ms
+            history_payload = {
+                "num_laps": player_history.num_laps,
+                "num_tyre_stints": player_history.num_tyre_stints,
+                "best_lap_time_lap_num": player_history.best_lap_time_lap_num,
+                "best_lap_time_ms": best_lap_ms,
+            }
+
+        tyre_sets_payload: dict[str, Any] = {}
+        if self._tyre_sets is not None:
+            fitted = self._safe_indexed(self._tyre_sets.tyre_set_data, self._tyre_sets.fitted_idx)
+            tyre_sets_payload = {
+                "car_idx": self._tyre_sets.car_idx,
+                "fitted_idx": self._tyre_sets.fitted_idx,
+                "fitted_compound": fitted.visual_tyre_compound if fitted is not None else None,
+                "available_sets": sum(1 for tyre in self._tyre_sets.tyre_set_data if tyre.available),
+            }
+
+        time_trial_payload: dict[str, Any] = {}
+        if self._time_trial is not None:
+            time_trial_payload = {
+                "player_lap_ms": self._time_trial.player_session.lap_time_in_ms,
+                "personal_best_ms": self._time_trial.personal_best.lap_time_in_ms,
+                "rival_best_ms": self._time_trial.rival.lap_time_in_ms,
+            }
+
+        final_classification_payload: dict[str, Any] = {}
+        if self._final_classification is not None:
+            player_result = self._safe_indexed(
+                self._final_classification.classification_data,
+                self._player_idx,
+            )
+            if player_result is not None:
+                final_classification_payload = {
+                    "position": player_result.position,
+                    "points": player_result.points,
+                    "num_laps": player_result.num_laps,
+                    "best_lap_time_ms": player_result.best_lap_time_in_ms,
+                    "num_pit_stops": player_result.num_pit_stops,
+                }
+
+        lap_positions_payload: dict[str, Any] = {}
+        if self._lap_positions is not None:
+            latest_positions = (
+                self._lap_positions.position_for_vehicle_idx[-1]
+                if self._lap_positions.position_for_vehicle_idx
+                else []
+            )
+            lap_positions_payload = {
+                "num_laps": self._lap_positions.num_laps,
+                "lap_start": self._lap_positions.lap_start,
+                "latest_player_position": (
+                    latest_positions[self._player_idx]
+                    if latest_positions and self._player_idx < len(latest_positions)
+                    else None
+                ),
+            }
+
+        lobby_payload: dict[str, Any] = {}
+        if self._lobby_info is not None:
+            lobby_payload = {
+                "num_players": self._lobby_info.num_players,
+                "player_names": [p.name for p in self._lobby_info.lobby_players[:10]],
+            }
+
+        available_sections = [
+            name
+            for name, data in (
+                ("gap", gap),
+                ("car_state", car_state),
+                ("health", health),
+                ("session", session_payload),
+                ("setup", setup_payload),
+                ("motion", motion_payload),
+                ("motion_ex", motion_ex_payload),
+                ("participants", participants_payload),
+                ("events", events_payload),
+                ("session_history", history_payload),
+                ("tyre_sets", tyre_sets_payload),
+                ("time_trial", time_trial_payload),
+                ("final_classification", final_classification_payload),
+                ("lap_positions", lap_positions_payload),
+                ("lobby", lobby_payload),
+            )
+            if data
+        ]
+
+        return {
+            "available": bool(available_sections),
+            "available_sections": available_sections,
+            "gap": gap,
+            "car_state": car_state,
+            "health": health,
+            "session": session_payload,
+            "setup": setup_payload,
+            "motion": motion_payload,
+            "motion_ex": motion_ex_payload,
+            "participants": participants_payload,
+            "events": events_payload,
+            "session_history": history_payload,
+            "tyre_sets": tyre_sets_payload,
+            "time_trial": time_trial_payload,
+            "final_classification": final_classification_payload,
+            "lap_positions": lap_positions_payload,
+            "lobby": lobby_payload,
         }
 
     def _record_radio_line(self, speaker: str, text: str) -> None:

@@ -55,12 +55,36 @@ _HEALTH_MARKERS = (
     "overheating",
     "health",
 )
+_FULL_SNAPSHOT_MARKERS = (
+    "weather",
+    "rain",
+    "wind",
+    "setup",
+    "wing",
+    "differential",
+    "suspension",
+    "history",
+    "best lap",
+    "session history",
+    "participants",
+    "who is ahead",
+    "who's ahead",
+    "who is behind",
+    "who's behind",
+    "events",
+    "incident",
+    "classification",
+    "lobby",
+    "lap positions",
+    "full telemetry",
+    "full snapshot",
+)
 
 _PLAN_SYSTEM_PROMPT = (
     "You classify race-radio driver requests. "
     "Return only JSON matching the schema. "
     "Choose telemetry tools only when the driver asks for live metrics. "
-    "Valid tool names: none, telemetry_gap, telemetry_car_state, telemetry_health."
+    "Valid tool names: none, telemetry_gap, telemetry_car_state, telemetry_health, telemetry_full_snapshot."
 )
 
 
@@ -113,6 +137,8 @@ def _heuristic_tool_name(query: str) -> str:
         return "telemetry_car_state"
     if any(marker in lowered for marker in _HEALTH_MARKERS):
         return "telemetry_health"
+    if any(marker in lowered for marker in _FULL_SNAPSHOT_MARKERS):
+        return "telemetry_full_snapshot"
     return "none"
 
 
@@ -267,9 +293,78 @@ def _deterministic_health_reply(payload: dict[str, Any]) -> EngineerReply:
     )
 
 
+def _deterministic_full_snapshot_reply(
+    payload: dict[str, Any],
+    query: str,
+) -> EngineerReply:
+    lowered = (query or "").strip().lower()
+
+    session = payload.get("session") or {}
+    setup = payload.get("setup") or {}
+    history = payload.get("session_history") or {}
+    participants = payload.get("participants") or {}
+    events = payload.get("events") or {}
+
+    if "weather" in lowered or "rain" in lowered:
+        weather = session.get("weather")
+        rain_pct = session.get("rain_percentage")
+        track_temp = session.get("track_temperature_c")
+        air_temp = session.get("air_temperature_c")
+        return EngineerReply(
+            radio_text=(
+                f"Weather {weather or 'unknown'}, rain risk {rain_pct if rain_pct is not None else 'n/a'} percent, "
+                f"track {track_temp if track_temp is not None else 'n/a'} C, air {air_temp if air_temp is not None else 'n/a'} C."
+            ),
+            insight_type="info",
+            priority=4,
+        )
+
+    if "setup" in lowered or "wing" in lowered or "suspension" in lowered:
+        return EngineerReply(
+            radio_text=(
+                f"Setup check: front wing {setup.get('front_wing', 'n/a')}, rear wing {setup.get('rear_wing', 'n/a')}, "
+                f"brake bias {setup.get('brake_bias', 'n/a')} percent."
+            ),
+            insight_type="info",
+            priority=4,
+        )
+
+    if "history" in lowered or "best lap" in lowered:
+        return EngineerReply(
+            radio_text=(
+                f"Session history shows {history.get('num_laps', 'n/a')} laps logged, "
+                f"best lap {history.get('best_lap_time_ms', 'n/a')} milliseconds."
+            ),
+            insight_type="info",
+            priority=4,
+        )
+
+    if "participants" in lowered or "ahead" in lowered or "behind" in lowered:
+        return EngineerReply(
+            radio_text=(
+                f"We have {participants.get('num_active_cars', 'n/a')} active cars. "
+                f"Ahead {participants.get('ahead_driver', 'unknown')}, behind {participants.get('behind_driver', 'unknown')}."
+            ),
+            insight_type="info",
+            priority=4,
+        )
+
+    recent_events = events.get("recent_codes") or []
+    summary = ", ".join(recent_events[:3]) if recent_events else "none"
+    return EngineerReply(
+        radio_text=(
+            f"Full telemetry packets are online. Recent events {summary}. "
+            "Call the exact metric you want and I will give the number."
+        ),
+        insight_type="info",
+        priority=3,
+    )
+
+
 def _deterministic_tool_reply(
     tool_name: str,
     payload: dict[str, Any] | None,
+    query: str,
 ) -> EngineerReply | None:
     data = payload or {}
     if tool_name == "telemetry_gap":
@@ -278,6 +373,8 @@ def _deterministic_tool_reply(
         return _deterministic_car_state_reply(data)
     if tool_name == "telemetry_health":
         return _deterministic_health_reply(data)
+    if tool_name == "telemetry_full_snapshot":
+        return _deterministic_full_snapshot_reply(data, query)
     return None
 
 
@@ -390,7 +487,11 @@ def make_respond_node(reply_client: ChatClient):
         except Exception:
             plan = EngineerPlan()
 
-        deterministic = _deterministic_tool_reply(tool_name or plan.tool_name, tool_payload)
+        deterministic = _deterministic_tool_reply(
+            tool_name or plan.tool_name,
+            tool_payload,
+            query,
+        )
         if deterministic is not None:
             final = deterministic
         else:

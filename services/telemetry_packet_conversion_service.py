@@ -27,6 +27,19 @@ def _convert_header(h) -> packets.PacketHeader:
     )
 
 
+def _g(obj, *names, default=None):
+    for name in names:
+        if hasattr(obj, name):
+            return getattr(obj, name)
+    return default
+
+
+def _name(raw) -> str:
+    if isinstance(raw, bytes):
+        return raw.decode("utf-8", errors="replace").rstrip("\x00")
+    return str(raw or "")
+
+
 def _convert_motion(ct_pkt):
     header = _convert_header(ct_pkt.m_header)
     cars = []
@@ -484,6 +497,142 @@ def _convert_motion_ex(ct_pkt):
     )
 
 
+def _convert_final_classification(ct_pkt):
+    header = _convert_header(ct_pkt.m_header)
+    num_cars = int(_g(ct_pkt, "m_num_cars", default=0) or 0)
+    rows = _g(ct_pkt, "m_classification_data", default=[]) or []
+
+    classification_data = []
+    for i in range(min(num_cars, len(rows), 22)):
+        c = rows[i]
+        stints_count = int(_g(c, "m_num_tyre_stints", default=0) or 0)
+        classification_data.append(
+            packets.FinalClassification(
+                position=_g(c, "m_position", default=0) or 0,
+                num_laps=_g(c, "m_num_laps", default=0) or 0,
+                grid_position=_g(c, "m_grid_position", default=0) or 0,
+                points=_g(c, "m_points", default=0) or 0,
+                num_pit_stops=_g(c, "m_num_pit_stops", default=0) or 0,
+                result_status=_g(c, "m_result_status", default=0) or 0,
+                result_reason=_g(c, "m_result_reason", default=0) or 0,
+                best_lap_time_in_ms=_g(c, "m_best_lap_time_in_ms", default=0) or 0,
+                total_race_time=_g(c, "m_total_race_time", default=0.0) or 0.0,
+                penalties_time=_g(c, "m_penalties_time", default=0) or 0,
+                num_penalties=_g(c, "m_num_penalties", default=0) or 0,
+                num_tyre_stints=stints_count,
+                tyre_stints_actual=list(_g(c, "m_tyre_stints_actual", default=[]))[
+                    :stints_count
+                ],
+                tyre_stints_visual=list(_g(c, "m_tyre_stints_visual", default=[]))[
+                    :stints_count
+                ],
+                tyre_stints_end_laps=list(
+                    _g(c, "m_tyre_stints_end_laps", default=[])
+                )[:stints_count],
+            )
+        )
+
+    return packets.PacketFinalClassificationData(
+        header=header,
+        num_cars=num_cars,
+        classification_data=classification_data,
+    )
+
+
+def _convert_lobby_info(ct_pkt):
+    header = _convert_header(ct_pkt.m_header)
+    num_players = int(_g(ct_pkt, "m_num_players", default=0) or 0)
+    rows = _g(ct_pkt, "m_lobby_players", default=[]) or []
+    players = []
+    for i in range(min(num_players, len(rows), 22)):
+        p = rows[i]
+        players.append(
+            packets.LobbyInfo(
+                ai_controlled=_g(p, "m_ai_controlled", default=1) or 1,
+                team_id=_g(p, "m_team_id", default=0) or 0,
+                nationality=_g(p, "m_nationality", default=0) or 0,
+                platform=_g(p, "m_platform", default=0) or 0,
+                name=_name(_g(p, "m_name", default="")),
+                car_number=_g(p, "m_car_number", default=0) or 0,
+                ready_status=_g(p, "m_ready_status", default=0) or 0,
+            )
+        )
+    return packets.PacketLobbyInfoData(
+        header=header,
+        num_players=num_players,
+        lobby_players=players,
+    )
+
+
+def _convert_time_trial_dataset(ds):
+    return packets.TimeTrialDataSet(
+        car_idx=_g(ds, "m_car_idx", default=0) or 0,
+        team_id=_g(ds, "m_team_id", default=0) or 0,
+        lap_time_in_ms=_g(ds, "m_lap_time_in_ms", default=0) or 0,
+        sector1_time_in_ms=_g(ds, "m_sector1_time_in_ms", default=0) or 0,
+        sector2_time_in_ms=_g(ds, "m_sector2_time_in_ms", default=0) or 0,
+        sector3_time_in_ms=_g(ds, "m_sector3_time_in_ms", default=0) or 0,
+        traction_control=_g(ds, "m_traction_control", default=0) or 0,
+        gearbox_assist=_g(ds, "m_gearbox_assist", default=0) or 0,
+        anti_lock_brakes=_g(ds, "m_anti_lock_brakes", default=0) or 0,
+        equal_car_performance=_g(ds, "m_equal_car_performance", default=0) or 0,
+        custom_setup=_g(ds, "m_custom_setup", default=0) or 0,
+        valid=_g(ds, "m_valid", default=0) or 0,
+    )
+
+
+def _convert_time_trial(ct_pkt):
+    header = _convert_header(ct_pkt.m_header)
+    player = _g(
+        ct_pkt,
+        "m_player_session_best_data_set",
+        "m_playerSessionBestDataSet",
+        default=None,
+    )
+    personal = _g(
+        ct_pkt,
+        "m_personal_best_data_set",
+        "m_personalBestDataSet",
+        default=None,
+    )
+    rival = _g(
+        ct_pkt,
+        "m_rival_session_best_data_set",
+        "m_rivalSessionBestDataSet",
+        default=None,
+    )
+    return packets.PacketTimeTrialData(
+        header=header,
+        player_session=_convert_time_trial_dataset(player) if player else packets.TimeTrialDataSet(),
+        personal_best=_convert_time_trial_dataset(personal) if personal else packets.TimeTrialDataSet(),
+        rival=_convert_time_trial_dataset(rival) if rival else packets.TimeTrialDataSet(),
+    )
+
+
+def _convert_lap_positions(ct_pkt):
+    header = _convert_header(ct_pkt.m_header)
+    num_laps = int(_g(ct_pkt, "m_num_laps", default=0) or 0)
+    lap_start = int(_g(ct_pkt, "m_lap_start", default=0) or 0)
+    matrix = _g(
+        ct_pkt,
+        "m_position_for_vehicle_idx",
+        "m_positionForVehicleIdx",
+        default=[],
+    ) or []
+    rows = []
+    for lap in matrix:
+        try:
+            rows.append([int(v) for v in lap][:22])
+        except Exception:
+            continue
+    return packets.PacketLapPositions(
+        header=header,
+        num_laps=num_laps,
+        lap_start=lap_start,
+        position_for_vehicle_idx=rows,
+    )
+
+
 PACKET_CONVERTERS = {
     0: _convert_motion,
     1: _convert_session,
@@ -493,9 +642,13 @@ PACKET_CONVERTERS = {
     5: _convert_car_setup,
     6: _convert_car_telemetry,
     7: _convert_car_status,
+    8: _convert_final_classification,
+    9: _convert_lobby_info,
     10: _convert_car_damage,
     11: _convert_session_history,
     12: _convert_tyre_sets,
     13: _convert_motion_ex,
+    14: _convert_time_trial,
+    15: _convert_lap_positions,
 }
 

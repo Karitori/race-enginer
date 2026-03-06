@@ -8,6 +8,7 @@ TelemetryToolName = Literal[
     "telemetry_gap",
     "telemetry_car_state",
     "telemetry_health",
+    "telemetry_full_snapshot",
 ]
 EngineerIntent = Literal[
     "telemetry",
@@ -30,4 +31,3 @@ class EngineerReply(BaseModel):
     radio_text: str = Field(..., min_length=1, description="Final race-radio line.")
     insight_type: EngineerInsightType = "info"
     priority: int = Field(4, ge=1, le=5)
-

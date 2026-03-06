@@ -32,6 +32,28 @@ class _StubTelemetryProvider:
             "max_damage_pct": 18,
         }
 
+    def get_full_telemetry_snapshot(self):
+        return {
+            "available": True,
+            "session": {
+                "weather": "Light Rain",
+                "rain_percentage": 62,
+                "track_temperature_c": 31,
+                "air_temperature_c": 24,
+            },
+            "setup": {
+                "front_wing": 8,
+                "rear_wing": 9,
+                "brake_bias": 56,
+            },
+            "participants": {
+                "num_active_cars": 20,
+                "ahead_driver": "Driver Ahead",
+                "behind_driver": "Driver Behind",
+            },
+            "events": {"recent_codes": ["FTLP", "OVTK"]},
+        }
+
 
 @pytest.mark.asyncio
 async def test_race_engineer_agent_answers_gap_from_tool(monkeypatch):
@@ -76,3 +98,25 @@ async def test_race_engineer_agent_answers_car_state_from_tool(monkeypatch):
     text = reply.radio_text.lower()
     assert "fuel" in text
     assert "ers" in text
+
+
+@pytest.mark.asyncio
+async def test_race_engineer_agent_answers_weather_from_full_snapshot(monkeypatch):
+    monkeypatch.delenv("LLM_PROVIDER", raising=False)
+    monkeypatch.delenv("LLM_MODEL", raising=False)
+
+    agent = RaceEngineerAgent(
+        telemetry_provider=_StubTelemetryProvider(),
+        thread_id="test-weather-thread",
+    )
+    reply = await agent.answer(
+        query="How is the weather evolving?",
+        telemetry_context="session weather sample",
+        persona_name="focused teammate",
+        persona_instruction="Persona text.",
+        tone_instruction="Tone text.",
+        driver_preference_instruction="Driver preference text.",
+    )
+    text = reply.radio_text.lower()
+    assert "weather" in text
+    assert "rain" in text

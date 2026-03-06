@@ -7,9 +7,12 @@ PACKET_TOPICS = {
     5: "packet_car_setup",
     6: "packet_car_telemetry",
     7: "packet_car_status",
+    8: "packet_final_classification",
+    9: "packet_lobby_info",
     10: "packet_car_damage",
     11: "packet_session_history",
     12: "packet_tyre_sets",
     13: "packet_motion_ex",
+    14: "packet_time_trial",
+    15: "packet_lap_positions",
 }
-
