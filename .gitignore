@@ -88,3 +88,4 @@ __pypackages__/
 *.pid
 *.tmp
 *.bak
+.overlay_settings.json

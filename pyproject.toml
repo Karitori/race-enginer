@@ -37,6 +37,7 @@ default-groups = ["dev"]
 
 [tool.hatch.build.targets.wheel]
 packages = [
+  "desktop_app",
   "agents",
   "db",
   "models",

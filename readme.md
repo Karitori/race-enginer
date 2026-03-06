@@ -16,6 +16,7 @@ This fork now uses root-level architecture modules with explicit ownership:
 - `tools`: LangChain tools (`@tool`-decorated modules)
 - `utils`: helper functions grouped by functionality
 - `main.py`: application entry point (not a directory)
+- `desktop_app`: standalone Windows overlay companion app (separate process from backend)
 
 Role-reflective file naming is now applied, for example:
 - `agents/strategy_agent.py`
@@ -55,6 +56,21 @@ cp .env.example .env
 ```bash
 uv run python main.py
 ```
+
+## Standalone Desktop Overlay (Windows)
+
+The overlay is intentionally separated from backend runtime so you can run/stop it independently.
+
+1. Start backend:
+```bash
+uv run python main.py
+```
+2. Start overlay companion app (new terminal):
+```bash
+uv run python overlay_main.py
+```
+
+The overlay connects to backend via `http://127.0.0.1:8000` and `ws://127.0.0.1:8000/ws` by default, with settings persisted to `.overlay_settings.json`.
 
 ## Notes
 

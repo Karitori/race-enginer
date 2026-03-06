@@ -46,7 +46,12 @@ The Race Engineer system is an intelligent assistant designed to act as an autom
 ### 6. Web Dashboard (`services/app_service.py` + `routes/`)
 - **Responsibility:** Real-time visual representation of telemetry and the Engineer's comms via FastAPI and WebSockets, with route handlers split into `routes/api_routes.py`, `routes/websocket_routes.py`, and `routes/dashboard_routes.py`.
 
-### 7. Runtime Orchestration (`main.py` + `services/telemetry_mode_service.py`)
+### 7. Desktop Overlay Companion (`desktop_app/`)
+- **Responsibility:** Separate Windows desktop process with semi-transparent overlay UI and local settings persistence.
+- **Integration boundary:** Connects only through backend HTTP and WebSocket endpoints (`/api/*`, `/ws`), keeping backend and desktop UI decoupled.
+- **Safety boundary:** External-only companion behavior (no process injection, no memory hooks, no game file patching).
+
+### 8. Runtime Orchestration (`main.py` + `services/telemetry_mode_service.py`)
 - **Responsibility:** Keep application entrypoint focused on composition while telemetry mode switching and server concerns are managed in dedicated services.
 
 ## Data Flow Diagram
