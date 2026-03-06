@@ -6,7 +6,12 @@ from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel
 
-from services.llm_profile_service import resolve_llm_profile
+from services.llm_profile_service import (
+    FORCED_LLM_MODEL,
+    FORCED_LLM_PROVIDER,
+    enforce_single_local_model,
+    resolve_llm_profile,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -34,15 +39,20 @@ class ChatClient:
             self.model = model or os.getenv("LLM_MODEL")
             self.temperature = temperature
             self.source = "explicit_or_global"
-        self._model: Any = None
 
-        if not self.provider or not self.model:
-            logger.info(
-                "llm client unavailable for role=%s (provider/model unset, source=%s)",
+        coerced_provider, coerced_model, coerced = enforce_single_local_model(
+            self.provider, self.model
+        )
+        if coerced:
+            logger.warning(
+                "unsupported LLM selection requested for role=%s; forcing %s/%s",
                 self.role or "default",
-                self.source,
+                FORCED_LLM_PROVIDER,
+                FORCED_LLM_MODEL,
             )
-            return
+        self.provider = coerced_provider
+        self.model = coerced_model
+        self._model: Any = None
 
         try:
             self._model = init_chat_model(

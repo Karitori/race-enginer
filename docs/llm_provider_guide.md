@@ -1,42 +1,29 @@
-# LLM Provider Guide (Cost vs Quality)
+# LLM Runtime Guide (Locked Configuration)
 
 Updated: 2026-03-06
 
-## Goal
-Use near-free or low-cost providers where possible, while keeping strategy/radio quality close to frontier-model behavior.
+## Policy
 
-## Practical Recommendations
+This project is intentionally locked to a single local LLM target:
 
-1. **Default low-cost cloud**: `groq + openai/gpt-oss-20b`
-- Best for always-on strategy polling and voice summarization.
-- Very low token pricing and fast latency.
+- Provider: `ollama`
+- Model: `nemotron-mini:4b` (NVIDIA lightweight model)
 
-2. **Higher-quality low-cost cloud**: `groq + openai/gpt-oss-120b`
-- Use for strategy and advisor if you want stronger reasoning depth.
-- Keep voice summarization on `gpt-oss-20b` to reduce cost.
+Any other configured provider/model is ignored and coerced back to this pair.
 
-3. **Free/local private option**: `ollama + qwen3`
-- Zero per-token API cost, fully local.
-- Quality depends on local hardware and selected model size.
+## Required Runtime
 
-## Runtime Mapping in This Repo
+1. Install and run Ollama locally.
+2. Pull the model:
+   - `ollama pull nemotron-mini:4b`
+3. Keep `.env` aligned:
+   - `LLM_PROVIDER=ollama`
+   - `LLM_MODEL=nemotron-mini:4b`
 
-Environment resolution priority:
-1. Role-specific envs (`STRATEGY_*`, `ADVISOR_*`, `VOICE_*`)
-2. Global envs (`LLM_*`)
-3. Optional `LLM_PROFILE` preset (`groq-cheap`, `groq-quality`, `local-oss`)
+## Notes
 
-## Source Links
-
-- LangChain `init_chat_model` integration index:
-  https://docs.langchain.com/oss/python/integrations/chat
-- Groq model and pricing pages:
-  - https://console.groq.com/docs/models
-  - https://console.groq.com/docs/models/openai/gpt-oss-120b
-  - https://console.groq.com/docs/models/openai/gpt-oss-20b
-- Ollama docs (local OSS deployment):
-  https://ollama.com/
-  https://docs.ollama.com/
-- Together AI pricing (additional low-cost cloud OSS option):
-  https://www.together.ai/pricing
-
+- Role-specific provider/model env overrides are no longer used.
+- Only temperature remains role-tunable (`STRATEGY_TEMPERATURE`, `ADVISOR_TEMPERATURE`, `VOICE_TEMPERATURE`).
+- STT and TTS remain local-only:
+  - STT: Whisper large-v3 via `faster-whisper`
+  - TTS: Pocket-TTS

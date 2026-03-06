@@ -106,34 +106,23 @@ Optional icon:
 
 ## LLM Choice
 
-The app now resolves models by role with fallback:
-- `STRATEGY_PROVIDER` / `STRATEGY_MODEL`
-- `ADVISOR_PROVIDER` / `ADVISOR_MODEL`
-- `VOICE_PROVIDER` / `VOICE_MODEL`
-- fallback to global `LLM_PROVIDER` / `LLM_MODEL`
-- optional presets via `LLM_PROFILE`:
-  - `groq-cheap` (`openai/gpt-oss-20b`)
-  - `groq-quality` (`openai/gpt-oss-120b` for strategy/advisor)
-  - `local-oss` (Ollama local models)
+The app now enforces a single local LLM runtime:
+- Provider: `ollama`
+- Model: `nemotron-mini:4b` (NVIDIA lightweight model)
 
-Temperatures can be set globally (`LLM_TEMPERATURE`) or per role (`STRATEGY_TEMPERATURE`, etc.).
+If other providers/models are configured in env, the app coerces them back to `ollama/nemotron-mini:4b`.
+
+Temperatures can still be set globally (`LLM_TEMPERATURE`) or per role (`STRATEGY_TEMPERATURE`, etc.).
 
 ## Voice & Audio
 
-- TTS output uses `VOICE_TTS_BACKEND` (`pocket`, `piper`, `pyttsx3`, or `none`), with `VOICE_ENABLE_TTS=true|false`.
-- Recommended local high-quality setup is Pocket-TTS:
+- TTS is locked to local Pocket-TTS:
   - `VOICE_TTS_BACKEND=pocket`
   - `VOICE_POCKET_CONFIG_PATH=...` (required local YAML with local weight/tokenizer paths)
   - `VOICE_POCKET_AUDIO_PROMPT_PATH=...` (required local `.wav` or `.safetensors`)
   - optional: `VOICE_POCKET_DEVICE`, `VOICE_POCKET_TEMP`, `VOICE_POCKET_MAX_TOKENS`
-- Local fallback setup for Piper:
-  1. Place your local Piper `.onnx` model (and `.onnx.json`) on disk.
-  2. Run:
-     `powershell -ExecutionPolicy Bypass -File .\configure_local_piper.ps1 -ModelPath "D:\path\voice.onnx"`
-  3. Copy generated lines from `.env.piper.local` into `.env`.
-- Optional mic STT is local Whisper via `VOICE_ENABLE_STT=true` and `VOICE_STT_BACKEND=whisper`.
+- Optional mic STT is locked to local Whisper via `VOICE_ENABLE_STT=true` and `VOICE_STT_BACKEND=whisper`.
   - `VOICE_STT_WHISPER_MODEL_PATH` is required and must point to a local Faster-Whisper model directory (for example `large-v3` converted model files).
   - optional: `VOICE_STT_WHISPER_DEVICE=cuda`, `VOICE_STT_WHISPER_COMPUTE_TYPE=float16`.
-- `VOICE_STT_BACKEND=parakeet` is reserved for upcoming integration and currently logs a clear not-wired warning.
 - Voice queue summarization now uses structured LLM output instead of manual JSON parsing.
 

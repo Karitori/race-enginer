@@ -98,20 +98,10 @@ class AudioInputService:
             self._setup_whisper()
             return
 
-        if self.backend == "parakeet":
-            logger.warning(
-                "VOICE_STT_BACKEND=parakeet is not wired yet; use whisper with a local large-v3 model for now."
-            )
-            return
-
-        if self.backend == "speech_recognition":
-            logger.warning(
-                "VOICE_STT_BACKEND=speech_recognition is disabled in local-only mode. "
-                "Switch to VOICE_STT_BACKEND=whisper."
-            )
-            return
-
-        logger.warning("unsupported VOICE_STT_BACKEND=%s; STT disabled", self.backend)
+        logger.warning(
+            "unsupported VOICE_STT_BACKEND=%s; only 'whisper' is allowed, STT disabled",
+            self.backend,
+        )
 
     def _setup_whisper(self) -> None:
         model_path = self.whisper_model_path
