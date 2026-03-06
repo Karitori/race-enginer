@@ -2,7 +2,6 @@ import asyncio
 import ctypes
 import logging
 import os
-import tempfile
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -91,10 +90,10 @@ class AudioInputService:
             os.getenv("VOICE_STT_CONTROL_MODE", "toggle") or "toggle"
         ).strip().lower()
         self.language = os.getenv("VOICE_STT_LANGUAGE", "en")
-        self.timeout_sec = _parse_float(os.getenv("VOICE_STT_TIMEOUT_SEC"), 4.0)
-        self.phrase_limit_sec = _parse_float(os.getenv("VOICE_STT_PHRASE_LIMIT_SEC"), 6.0)
-        self.ambient_sec = _parse_float(os.getenv("VOICE_STT_AMBIENT_SEC"), 0.4)
-        self.ptt_chunk_sec = _parse_float(os.getenv("VOICE_STT_PTT_CHUNK_SEC"), 2.2)
+        self.timeout_sec = _parse_float(os.getenv("VOICE_STT_TIMEOUT_SEC"), 2.0)
+        self.phrase_limit_sec = _parse_float(os.getenv("VOICE_STT_PHRASE_LIMIT_SEC"), 4.0)
+        self.ambient_sec = _parse_float(os.getenv("VOICE_STT_AMBIENT_SEC"), 0.25)
+        self.ptt_chunk_sec = _parse_float(os.getenv("VOICE_STT_PTT_CHUNK_SEC"), 1.2)
         self.mic_index = _parse_optional_int(os.getenv("VOICE_STT_MIC_INDEX"))
         self.dynamic_energy_threshold = _parse_bool(
             os.getenv("VOICE_STT_DYNAMIC_ENERGY_THRESHOLD"), True
@@ -423,7 +422,7 @@ class AudioInputService:
                     self._ambient_calibrated = True
                 if self.control_mode == "ptt":
                     # PTT should capture immediately without waiting for voice trigger.
-                    chunk_sec = max(0.5, min(self.ptt_chunk_sec, max(0.5, self.phrase_limit_sec)))
+                    chunk_sec = max(0.35, min(self.ptt_chunk_sec, max(0.35, self.phrase_limit_sec)))
                     audio = self._recognizer.record(source, duration=chunk_sec)
                 else:
                     audio = self._recognizer.listen(
@@ -453,16 +452,15 @@ class AudioInputService:
         if self._whisper_model is None:
             return None
 
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as wav_file:
-            wav_path = wav_file.name
-
         try:
-            wav_bytes = audio.get_wav_data(convert_rate=16000, convert_width=2)
-            with open(wav_path, "wb") as output_wav:
-                output_wav.write(wav_bytes)
+            import numpy as np
+
+            # Fast path: avoid disk I/O by decoding microphone PCM in memory.
+            raw_pcm = audio.get_raw_data(convert_rate=16000, convert_width=2)
+            pcm = np.frombuffer(raw_pcm, dtype=np.int16).astype("float32") / 32768.0
 
             segments, info = self._whisper_model.transcribe(
-                wav_path,
+                pcm,
                 language=self.language or None,
                 beam_size=self.whisper_beam_size,
                 vad_filter=self.whisper_vad_filter,
@@ -503,11 +501,6 @@ class AudioInputService:
             if self._activate_cpu_fallback():
                 self._last_error = "switched to cpu/int8 fallback after cuda transcription failures"
             return None
-        finally:
-            try:
-                os.remove(wav_path)
-            except OSError:
-                pass
 
     def stop(self) -> None:
         self._running = False

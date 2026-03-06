@@ -1,7 +1,10 @@
 import logging
+import os
 from collections import deque
-from typing import Optional
+from typing import Any, Optional
 
+from agents.race_engineer_agent import RaceEngineerAgent
+from models.engineer_agent import EngineerReply
 from models.strategy import StrategyInsight
 from models.telemetry import TelemetryTick, DriverQuery, DrivingInsight
 from models.telemetry_packets import (
@@ -9,10 +12,11 @@ from models.telemetry_packets import (
     PacketCarDamageData,
     PacketSessionData,
     PacketLapData,
+    PacketCarTelemetryData,
 )
 from services.event_bus_service import bus
 from services.llm_factory import ChatClient
-from prompts.race_engineer_prompts import build_advisor_system_prompt
+from utils.telemetry_enums import TYRE_COMPOUND_SHORT
 from utils.radio_character_guard import is_out_of_character_response
 from utils.radio_context import build_radio_context
 from utils.radio_personality import (
@@ -41,6 +45,10 @@ class RaceEngineerService:
         self._active_persona = "focused_teammate"
         self._conversation_history: deque[str] = deque(maxlen=12)
         self._driver_preference = "standard"
+        self._agent = RaceEngineerAgent(
+            telemetry_provider=self,
+            thread_id=os.getenv("RACE_ENGINEER_THREAD_ID", "race-engineer-main"),
+        )
 
         # State tracking (legacy)
         self.latest_telemetry: Optional[TelemetryTick] = None
@@ -51,6 +59,7 @@ class RaceEngineerService:
         self._car_damage: Optional[PacketCarDamageData] = None
         self._session: Optional[PacketSessionData] = None
         self._lap_data: Optional[PacketLapData] = None
+        self._car_telemetry: Optional[PacketCarTelemetryData] = None
         self._player_idx: int = 0
 
         # Subscribe to data
@@ -61,6 +70,7 @@ class RaceEngineerService:
         bus.subscribe("packet_car_damage", self._update_car_damage)
         bus.subscribe("packet_session", self._update_session)
         bus.subscribe("packet_lap_data", self._update_lap_data)
+        bus.subscribe("packet_car_telemetry", self._update_car_telemetry)
 
     async def _update_telemetry(self, tick: TelemetryTick):
         self.latest_telemetry = tick
@@ -90,6 +100,9 @@ class RaceEngineerService:
     async def _update_lap_data(self, data: PacketLapData):
         self._lap_data = data
 
+    async def _update_car_telemetry(self, data: PacketCarTelemetryData):
+        self._car_telemetry = data
+
     def _build_context(self) -> str:
         """Build a rich context string from all available data."""
         return build_radio_context(
@@ -101,6 +114,97 @@ class RaceEngineerService:
             lap_data=self._lap_data,
             player_idx=self._player_idx,
         )
+
+    @staticmethod
+    def _safe_indexed(items: list[Any], index: int) -> Any | None:
+        if index < 0 or index >= len(items):
+            return None
+        return items[index]
+
+    def get_gap_snapshot(self) -> dict[str, Any]:
+        lap_packet = self._lap_data
+        if lap_packet is None:
+            return {"available": False}
+        lap = self._safe_indexed(lap_packet.car_lap_data, self._player_idx)
+        if lap is None:
+            return {"available": False}
+        return {
+            "available": True,
+            "lap": lap.current_lap_num,
+            "position": lap.car_position,
+            "gap_front_ms": lap.delta_to_car_in_front_in_ms,
+            "gap_leader_ms": lap.delta_to_race_leader_in_ms,
+            "last_lap_ms": lap.last_lap_time_in_ms,
+            "pit_stops": lap.num_pit_stops,
+        }
+
+    def get_car_state_snapshot(self) -> dict[str, Any]:
+        status_packet = self._car_status
+        if status_packet is None:
+            return {"available": False}
+        status = self._safe_indexed(status_packet.car_status_data, self._player_idx)
+        if status is None:
+            return {"available": False}
+        ers_pct = max(0.0, min(100.0, (status.ers_store_energy / 4000000.0) * 100.0))
+        return {
+            "available": True,
+            "fuel_remaining_laps": status.fuel_remaining_laps,
+            "fuel_in_tank": status.fuel_in_tank,
+            "ers_pct": ers_pct,
+            "ers_mode": status.ers_deploy_mode,
+            "drs_available": bool(status.drs_allowed),
+            "tyre_age_laps": status.tyres_age_laps,
+            "compound": TYRE_COMPOUND_SHORT.get(status.visual_tyre_compound, "UNK"),
+        }
+
+    def get_health_snapshot(self) -> dict[str, Any]:
+        max_brake: int | None = None
+        max_tire: int | None = None
+        max_damage: int | None = None
+        max_damage_component: str | None = None
+
+        if self._car_telemetry is not None:
+            telemetry = self._safe_indexed(
+                self._car_telemetry.car_telemetry_data,
+                self._player_idx,
+            )
+            if telemetry is not None:
+                max_brake = max(telemetry.brakes_temperature) if telemetry.brakes_temperature else None
+                max_tire = (
+                    max(telemetry.tyres_surface_temperature)
+                    if telemetry.tyres_surface_temperature
+                    else None
+                )
+
+        if self._car_damage is not None:
+            damage = self._safe_indexed(self._car_damage.car_damage_data, self._player_idx)
+            if damage is not None:
+                components = {
+                    "front_left_wing": damage.front_left_wing_damage,
+                    "front_right_wing": damage.front_right_wing_damage,
+                    "rear_wing": damage.rear_wing_damage,
+                    "floor": damage.floor_damage,
+                    "diffuser": damage.diffuser_damage,
+                    "sidepod": damage.sidepod_damage,
+                    "gearbox": damage.gear_box_damage,
+                    "engine": damage.engine_damage,
+                }
+                sorted_components = sorted(
+                    components.items(),
+                    key=lambda item: item[1],
+                    reverse=True,
+                )
+                if sorted_components:
+                    max_damage_component, max_damage = sorted_components[0]
+
+        available = any(v is not None for v in (max_brake, max_tire, max_damage))
+        return {
+            "available": available,
+            "max_brake_temp_c": max_brake,
+            "max_tire_surface_temp_c": max_tire,
+            "max_damage_component": max_damage_component,
+            "max_damage_pct": max_damage,
+        }
 
     def _record_radio_line(self, speaker: str, text: str) -> None:
         cleaned = (text or "").strip()
@@ -120,14 +224,6 @@ class RaceEngineerService:
         if not self._conversation_history:
             return "No prior exchanges."
         return "\n".join(self._conversation_history)
-
-    def _build_driver_prompt(self, driver_query: str) -> str:
-        return (
-            f"Driver latest message: {driver_query}\n\n"
-            "Conversation memory (most recent at bottom):\n"
-            f"{self._build_radio_history_context()}\n\n"
-            "Reply as Becca on live race radio."
-        )
 
     def _update_driver_preference(self, query_text: str) -> None:
         lowered = (query_text or "").strip().lower()
@@ -223,80 +319,66 @@ class RaceEngineerService:
         )
         self._rapport_level = next_rapport_level(self._rapport_level, detected_tone)
 
-        if not self.client.available:
-            logger.warning("advisor LLM not configured. Using fallback dynamic response.")
-            t = self.latest_telemetry
-            fallback_msg = f"I'm offline, but I see your front left tire is at {t.tire_wear_fl:.1f} percent."
-            fallback_msg = apply_persona_fillers(
-                fallback_msg,
-                persona=persona,
-                tone=detected_tone,
-                strategy_critical=strategy_critical,
-                rapport_level=self._rapport_level,
-            )
-            await self._send_insight(
-                to_radio_brief(fallback_msg, max_sentences=2, max_chars=150),
-                "info",
-                record_dialogue=True,
-            )
-            return
-
-        system_prompt = build_advisor_system_prompt(
-            telemetry_context=context,
-            persona_name=persona.replace("_", " "),
-            persona_instruction=persona_instruction(persona),
-            tone_instruction=style_instruction,
-            conversation_context=self._build_radio_history_context(),
-            driver_preference_instruction=self._driver_preference_instruction(),
-        )
-        user_prompt = self._build_driver_prompt(query.query)
-
         try:
-            answer = await self.client.generate_text(system_prompt, user_prompt)
-            if answer:
-                brief_answer = to_radio_brief(
-                    answer,
-                    max_sentences=2,
-                    max_chars=190 if detected_tone == "banter" else 170,
-                )
-                if brief_answer:
-                    if is_out_of_character_response(brief_answer):
-                        logger.warning(
-                            "advisor reply drifted out of character; attempting prompt-based rewrite."
-                        )
-                        rewritten = await self._rewrite_in_character(
-                            draft_answer=brief_answer,
-                            driver_query=query.query,
-                            persona=persona.replace("_", " "),
-                            tone_instruction_text=style_instruction,
-                            conversation_context=self._build_radio_history_context(),
-                        )
-                        brief_answer = (
-                            rewritten
-                            if rewritten
-                            else "Copy. I'm with you. Keep the call coming."
-                        )
+            reply: EngineerReply = await self._agent.answer(
+                query=query.query,
+                telemetry_context=context,
+                persona_name=persona.replace("_", " "),
+                persona_instruction=persona_instruction(persona),
+                tone_instruction=style_instruction,
+                driver_preference_instruction=self._driver_preference_instruction(),
+            )
+            brief_answer = to_radio_brief(
+                reply.radio_text,
+                max_sentences=2,
+                max_chars=190 if detected_tone == "banter" else 170,
+            )
+            if brief_answer:
+                if is_out_of_character_response(brief_answer):
+                    logger.warning(
+                        "advisor reply drifted out of character; attempting prompt-based rewrite."
+                    )
+                    rewritten = await self._rewrite_in_character(
+                        draft_answer=brief_answer,
+                        driver_query=query.query,
+                        persona=persona.replace("_", " "),
+                        tone_instruction_text=style_instruction,
+                        conversation_context=self._build_radio_history_context(),
+                    )
+                    brief_answer = (
+                        rewritten
+                        if rewritten
+                        else "Copy. I'm with you. Keep the call coming."
+                    )
 
-                    styled_answer = apply_persona_fillers(
-                        brief_answer,
-                        persona=persona,
-                        tone=detected_tone,
-                        strategy_critical=strategy_critical,
-                        rapport_level=self._rapport_level,
-                    )
-                    styled_answer = to_radio_brief(
-                        styled_answer,
-                        max_sentences=2,
-                        max_chars=190 if detected_tone == "banter" else 175,
-                    )
-                    insight_type = "warning" if strategy_critical or detected_tone == "urgent" else "info"
-                    priority = 5 if strategy_critical or detected_tone == "urgent" else 4
-                    await self._send_insight(
-                        styled_answer,
-                        insight_type,
-                        priority=priority,
-                        record_dialogue=True,
-                    )
+                styled_answer = apply_persona_fillers(
+                    brief_answer,
+                    persona=persona,
+                    tone=detected_tone,
+                    strategy_critical=strategy_critical,
+                    rapport_level=self._rapport_level,
+                )
+                styled_answer = to_radio_brief(
+                    styled_answer,
+                    max_sentences=2,
+                    max_chars=190 if detected_tone == "banter" else 175,
+                )
+                insight_type = (
+                    "warning"
+                    if strategy_critical or detected_tone == "urgent"
+                    else reply.insight_type
+                )
+                priority = (
+                    5
+                    if strategy_critical or detected_tone == "urgent"
+                    else int(reply.priority)
+                )
+                await self._send_insight(
+                    styled_answer,
+                    insight_type,
+                    priority=priority,
+                    record_dialogue=True,
+                )
 
         except Exception as e:
             logger.error(f"Failed to generate advisor response: {e}")
