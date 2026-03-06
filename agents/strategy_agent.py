@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import time
 from typing import Any
 
 from langgraph.graph import StateGraph, END
@@ -34,6 +35,9 @@ class StrategyAgent:
         self.repository = repository
         self.poll_interval = poll_interval
         self._is_running = False
+        self._current_poll_interval = float(poll_interval)
+        self._last_signature: str | None = None
+        self._last_publish_monotonic = 0.0
 
         provider = os.getenv("STRATEGY_PROVIDER") or os.getenv("LLM_PROVIDER")
         model = os.getenv("STRATEGY_MODEL") or os.getenv("LLM_MODEL")
@@ -89,7 +93,7 @@ class StrategyAgent:
 
         while self._is_running:
             await self._run_once()
-            await asyncio.sleep(self.poll_interval)
+            await asyncio.sleep(self._current_poll_interval)
 
     def stop(self) -> None:
         self._is_running = False
@@ -115,13 +119,72 @@ class StrategyAgent:
                 ers_call=state.get("ers_call"),
                 team_notes=list(state.get("team_notes", [])),
             )
-            await bus.publish("strategy_insight", insight)
-            logger.info(
-                "Strategy insight published (C%d): %s", insight.criticality, summary
+            self._current_poll_interval = self._poll_interval_for_criticality(
+                insight.criticality
             )
+
+            if self._should_publish(insight):
+                await bus.publish("strategy_insight", insight)
+                logger.info(
+                    "Strategy insight published (C%d, poll %.1fs): %s",
+                    insight.criticality,
+                    self._current_poll_interval,
+                    summary,
+                )
+            else:
+                logger.debug(
+                    "Strategy insight suppressed (duplicate/too-frequent): %s", summary
+                )
 
         except Exception as exc:
             logger.error("LangGraph strategy agent run failed: %s", exc)
+
+    def _poll_interval_for_criticality(self, criticality: int) -> float:
+        if criticality >= 5:
+            return max(4.0, self.poll_interval * 0.35)
+        if criticality >= 4:
+            return max(5.0, self.poll_interval * 0.5)
+        if criticality == 3:
+            return max(8.0, self.poll_interval * 0.75)
+        return float(self.poll_interval)
+
+    def _should_publish(self, insight: StrategyInsight) -> bool:
+        signature = "|".join(
+            [
+                insight.summary.strip().lower(),
+                insight.recommendation.strip().lower(),
+                str(insight.criticality),
+                ",".join(sorted(insight.risk_tags)),
+            ]
+        )
+        now = time.monotonic()
+
+        if self._last_signature is None:
+            self._last_signature = signature
+            self._last_publish_monotonic = now
+            return True
+
+        if insight.criticality >= 4 and signature != self._last_signature:
+            self._last_signature = signature
+            self._last_publish_monotonic = now
+            return True
+
+        min_interval = 12.0 if insight.criticality <= 2 else 8.0
+        if signature != self._last_signature and (now - self._last_publish_monotonic) >= min_interval:
+            self._last_signature = signature
+            self._last_publish_monotonic = now
+            return True
+
+        heartbeat_interval = 60.0
+        if (
+            insight.criticality >= 3
+            and (now - self._last_publish_monotonic) >= heartbeat_interval
+        ):
+            self._last_signature = signature
+            self._last_publish_monotonic = now
+            return True
+
+        return False
 
 
 
