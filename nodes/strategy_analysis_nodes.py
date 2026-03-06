@@ -29,6 +29,7 @@ from utils.f1_25_strategy_knowledge import (
     compound_name,
     recommend_next_compound,
 )
+from utils.radio_text import to_radio_brief
 from utils.track_strategy_profiles import get_track_strategy_profile
 
 
@@ -861,11 +862,22 @@ def make_synthesize_decision_node(llm_runner: LLMRunner | None = None):
                 if isinstance(llm_notes, list):
                     decision["team_notes"] = [str(note) for note in llm_notes if str(note)]
 
+        summary = to_radio_brief(
+            str(decision.get("summary", "")),
+            max_sentences=1,
+            max_chars=96,
+        ) or "Strategy update."
+        recommendation = to_radio_brief(
+            str(decision.get("recommendation", "")),
+            max_sentences=2,
+            max_chars=160,
+        ) or "Hold current plan."
+
         return {
             **state,
             "risks": list(decision["risk_tags"]),
-            "summary": str(decision["summary"]),
-            "recommendation": str(decision["recommendation"]),
+            "summary": summary,
+            "recommendation": recommendation,
             "criticality": int(decision["criticality"]),
             "confidence": float(decision["confidence"]),
             "risk_tags": list(decision["risk_tags"]),

@@ -8,6 +8,7 @@ from services.audio_input_service import AudioInputService
 from services.audio_output_service import AudioOutputService
 from services.event_bus_service import bus
 from services.llm_factory import ChatClient
+from utils.radio_text import to_radio_brief
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +81,19 @@ class VoiceAssistant:
         logger.info("Race Engineer talk level updated to %d", self.talk_level)
 
     async def _handle_incoming_insight(self, insight: DrivingInsight):
+        brief_message = to_radio_brief(
+            insight.message,
+            max_sentences=2,
+            max_chars=170,
+        )
+        if not brief_message:
+            return
+        if brief_message != insight.message:
+            insight = DrivingInsight(
+                message=brief_message,
+                type=insight.type,
+                priority=insight.priority,
+            )
         self._seq += 1
         queue_priority = (
             -insight.priority
@@ -182,6 +196,7 @@ class VoiceAssistant:
 
 Driver talk level is {self.talk_level}/10 (1 = very quiet, 10 = very detailed).
 Respect the talk level and keep critical warnings over informational chatter.
+Never output bullet points, numbering, markdown, or list formatting.
 
 Queued Messages:
 {messages_text}
@@ -210,9 +225,16 @@ Queued Messages:
                         decision = None
 
                 if decision and decision.escalate and decision.tts_text.strip():
-                    logger.info("VOICE ENGINE SMART SUMMARY: %s", decision.tts_text)
+                    tts_text = to_radio_brief(
+                        decision.tts_text,
+                        max_sentences=2,
+                        max_chars=170,
+                    )
+                    if not tts_text:
+                        continue
+                    logger.info("VOICE ENGINE SMART SUMMARY: %s", tts_text)
                     summary_insight = DrivingInsight(
-                        message=decision.tts_text.strip(),
+                        message=tts_text,
                         type="info",
                         priority=3,
                     )

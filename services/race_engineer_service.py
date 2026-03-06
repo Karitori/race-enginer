@@ -12,6 +12,7 @@ from models.telemetry_packets import (
 from services.event_bus_service import bus
 from services.llm_factory import ChatClient
 from utils.radio_context import build_radio_context
+from utils.radio_text import to_radio_brief
 
 logger = logging.getLogger(__name__)
 
@@ -102,14 +103,18 @@ class RaceEngineerService:
             logger.warning("advisor LLM not configured. Using fallback dynamic response.")
             t = self.latest_telemetry
             fallback_msg = f"I'm offline, but I see your front left tire is at {t.tire_wear_fl:.1f} percent."
-            await self._send_insight(fallback_msg, "info")
+            await self._send_insight(
+                to_radio_brief(fallback_msg, max_sentences=2, max_chars=150),
+                "info",
+            )
             return
 
         system_prompt = (
             "You are an F1 Race Engineer speaking directly over the radio to your driver. "
+            "Assume the race is live right now and address the driver directly. "
             "Give concise, high-signal radio answers. Use 1-2 short sentences max. "
             "Lead with the action to take now, then one brief reason if needed. "
-            "Avoid long explanations, lists, markdown, and filler. "
+            "Never use bullets, numbering, markdown, or long explanations. "
             "Use the provided live telemetry to answer the driver's question accurately. "
             "You have access to tire wear, fuel levels, ERS state, weather, position, "
             "damage status, and strategy team analysis. "
@@ -119,7 +124,13 @@ class RaceEngineerService:
         try:
             answer = await self.client.generate_text(system_prompt, query.query)
             if answer:
-                await self._send_insight(answer.strip(), "info", priority=4)
+                brief_answer = to_radio_brief(
+                    answer,
+                    max_sentences=2,
+                    max_chars=170,
+                )
+                if brief_answer:
+                    await self._send_insight(brief_answer, "info", priority=4)
 
         except Exception as e:
             logger.error(f"Failed to generate advisor response: {e}")
