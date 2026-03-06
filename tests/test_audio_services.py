@@ -158,7 +158,7 @@ def test_apply_expressive_format_adds_urgency(monkeypatch):
     monkeypatch.setenv("VOICE_ENABLE_TTS", "false")
     service = AudioOutputService()
     formatted = service._apply_expressive_format("Box this lap", "warning", 4)
-    assert formatted.endswith("!")
+    assert formatted == "Box this lap"
 
 
 @pytest.mark.asyncio

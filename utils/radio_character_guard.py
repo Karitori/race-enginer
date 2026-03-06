@@ -15,6 +15,8 @@ _OUT_OF_CHARACTER_PATTERNS = (
     r"\bpersonal matters\b",
     r"\bi do not have\b",
     r"\bi don't have\b",
+    r"\bhow can i assist you today\b",
+    r"\bi'?m doing well,?\s*thanks for asking\b",
 )
 
 
@@ -23,4 +25,3 @@ def is_out_of_character_response(text: str) -> bool:
     if not sample:
         return True
     return any(re.search(pattern, sample) for pattern in _OUT_OF_CHARACTER_PATTERNS)
-

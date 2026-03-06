@@ -1,5 +1,6 @@
 import time
 import logging
+import os
 from models.telemetry import TelemetryTick, DrivingInsight
 from models.telemetry_packets import (
     PacketCarStatusData,
@@ -16,6 +17,15 @@ from utils.telemetry_enums import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_float(raw: str | None, default: float) -> float:
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
 
 
 class PerformanceAnalyzer:
@@ -58,6 +68,11 @@ class PerformanceAnalyzer:
         self._last_position_check_time = 0.0  # Rate-limit position checks to 1/sec
         self._last_car_status_time = 0.0  # Rate-limit car_status checks to 1/sec
         self._last_car_telemetry_time = 0.0  # Rate-limit temp checks to 2/sec
+        self._last_lockup_warning_time = 0.0
+        self._lockup_warning_count_lap = 0
+        self._lockup_warning_cooldown_sec = _parse_float(
+            os.getenv("FEEDBACK_LOCKUP_COOLDOWN_SEC"), 18.0
+        )
 
     async def _handle_telemetry_tick(self, data: TelemetryTick):
         """Legacy handler - lap detection, braking, tire wear."""
@@ -68,6 +83,7 @@ class PerformanceAnalyzer:
             self._brake_temp_warned = False
             self._tire_temp_warned = False
             self._ers_low_warned = False
+            self._lockup_warning_count_lap = 0
             logger.info(f"Feedback Engine: Detected new lap {self.last_lap}.")
 
             insight = DrivingInsight(
@@ -89,12 +105,24 @@ class PerformanceAnalyzer:
                 and not self._braking_warned_this_zone
             ):
                 self._braking_warned_this_zone = True
-                insight = DrivingInsight(
-                    message="Watch the lockup, you are braking very hard into this zone.",
-                    type="warning",
-                    priority=4,
-                )
-                await bus.publish("driving_insight", insight)
+                now = time.monotonic()
+                if (now - self._last_lockup_warning_time) >= self._lockup_warning_cooldown_sec:
+                    self._last_lockup_warning_time = now
+                    self._lockup_warning_count_lap += 1
+
+                    if self._lockup_warning_count_lap >= 3:
+                        insight = DrivingInsight(
+                            message="Repeated lockups this lap. Brake earlier and release pressure smoothly.",
+                            type="warning",
+                            priority=4,
+                        )
+                    else:
+                        insight = DrivingInsight(
+                            message="Careful on brake entry, avoid locking the fronts in this zone.",
+                            type="info",
+                            priority=3,
+                        )
+                    await bus.publish("driving_insight", insight)
         else:
             # Released brakes - reset for next zone
             self._braking_in_zone = False

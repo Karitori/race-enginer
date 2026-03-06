@@ -259,15 +259,7 @@ class AudioOutputService:
         return self._kokoro_voice, self._kokoro_speed
 
     def _apply_expressive_format(self, text: str, style_hint: str | None, priority: int | None) -> str:
-        if not self._kokoro_expressive:
-            return text
-
-        style = _parse_style_hint(style_hint, fallback="info")
-        if priority is not None and priority >= 5:
-            style = "warning"
-
-        if style == "warning":
-            return text if text.endswith("!") else f"{text}!"
+        # Keep wording fully model-driven for natural speech; no hardcoded lexical templates.
         return text
 
     async def speak(
