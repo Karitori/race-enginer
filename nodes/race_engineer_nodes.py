@@ -409,11 +409,18 @@ def make_respond_node(reply_client: ChatClient):
 
             tool_context = tool_payload if isinstance(tool_payload, dict) else {}
             user_prompt = (
-                f"Driver latest message: {query}\n\n"
-                "Conversation memory (most recent at bottom):\n"
-                f"{conversation_context}\n\n"
-                f"Telemetry tool context: {json.dumps(tool_context, ensure_ascii=True)}\n\n"
-                "Reply as Becca on live race radio."
+                "<driver_query>\n"
+                f"{query}\n"
+                "</driver_query>\n"
+                "<conversation_memory>\n"
+                f"{conversation_context}\n"
+                "</conversation_memory>\n"
+                "<telemetry_tool_context>\n"
+                f"{json.dumps(tool_context, ensure_ascii=True)}\n"
+                "</telemetry_tool_context>\n"
+                "<response_instruction>\n"
+                "Reply as Becca with only the final race-radio content.\n"
+                "</response_instruction>"
             )
 
             final = EngineerReply(
@@ -460,4 +467,3 @@ def make_respond_node(reply_client: ChatClient):
         }
 
     return respond_node
-

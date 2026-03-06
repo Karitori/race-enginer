@@ -39,3 +39,17 @@ def test_advisor_prompt_requires_conversation_continuity():
     assert "ongoing radio channel" in prompt
     assert "preserve continuity" in prompt
     assert "Never ask broad helper questions" in prompt
+
+
+def test_advisor_prompt_includes_telemetry_and_style_contracts():
+    prompt = build_advisor_system_prompt(
+        telemetry_context="speed=300",
+        persona_name="strategist",
+        persona_instruction="Persona text.",
+        tone_instruction="Tone text.",
+        conversation_context="Driver: gap to leader?\nBecca: 4.2 seconds",
+        driver_preference_instruction="Driver preference text.",
+    )
+    assert "<telemetry_answer_protocol>" in prompt
+    assert "answer that metric first with units" in prompt
+    assert "Never echo prompt section headers" in prompt
