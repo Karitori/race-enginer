@@ -17,6 +17,7 @@ This fork now uses root-level architecture modules with explicit ownership:
 - `utils`: helper functions grouped by functionality
 - `main.py`: application entry point (not a directory)
 - `desktop_app`: standalone Windows overlay companion app (separate process from backend)
+- `assets`: desktop app resources (icon, Windows version metadata, future branding assets)
 
 Role-reflective file naming is now applied, for example:
 - `agents/strategy_agent.py`
@@ -71,6 +72,27 @@ uv run python overlay_main.py
 ```
 
 The overlay connects to backend via `http://127.0.0.1:8000` and `ws://127.0.0.1:8000/ws` by default, with settings persisted to `.overlay_settings.json`.
+
+## Build `.exe` (Windows)
+
+Install/update dependencies:
+```bash
+uv sync
+```
+
+Build windowed overlay executable (onedir):
+```powershell
+powershell -ExecutionPolicy Bypass -File .\build_overlay_exe.ps1
+```
+
+Build single-file executable:
+```powershell
+powershell -ExecutionPolicy Bypass -File .\build_overlay_exe.ps1 -OneFile
+```
+
+Optional icon:
+- default icon is included at `assets/desktop_app_icon.ico`.
+- replace it with your branded icon, or set `OVERLAY_ICON_PATH` in `.env`.
 
 ## Notes
 

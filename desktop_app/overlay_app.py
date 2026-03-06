@@ -3,6 +3,7 @@ import logging
 import os
 import threading
 from concurrent.futures import Future
+from contextlib import suppress
 
 from desktop_app.overlay_client import OverlayClientService
 from desktop_app.overlay_models import OverlaySettings
@@ -120,7 +121,14 @@ class OverlayApp:
         if self._loop is None or self._client is None:
             return None
         coroutine = factory()
-        return asyncio.run_coroutine_threadsafe(coroutine, self._loop)
+        future = asyncio.run_coroutine_threadsafe(coroutine, self._loop)
+
+        def _consume_result(done_future: Future) -> None:
+            with suppress(Exception):
+                _ = done_future.result()
+
+        future.add_done_callback(_consume_result)
+        return future
 
     def _save_settings(self, settings: OverlaySettings) -> OverlaySettings:
         previous = self._settings

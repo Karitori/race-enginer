@@ -1,8 +1,9 @@
-import queue
 from collections.abc import Callable
 
+from desktop_app.overlay_event_buffer import OverlayEventBuffer
 from desktop_app.overlay_formatting import format_connection_label, format_gear
 from desktop_app.overlay_models import OverlaySettings, OverlayState
+from desktop_app.overlay_resources import get_overlay_icon_path
 
 
 class OverlayWindowService:
@@ -18,7 +19,8 @@ class OverlayWindowService:
     ):
         self._settings = settings
         self._state = OverlayState()
-        self._event_queue: queue.Queue[tuple[str, dict]] = queue.Queue()
+        self._event_buffer = OverlayEventBuffer(max_queue_size=300)
+        self._last_talk_level_sent: int | None = None
 
         self._on_query = on_query
         self._on_talk_level_changed = on_talk_level_changed
@@ -45,7 +47,7 @@ class OverlayWindowService:
         self._query_var = None
 
     def enqueue_event(self, topic: str, payload: dict) -> None:
-        self._event_queue.put((topic, payload))
+        self._event_buffer.push(topic, payload)
 
     def run(self) -> None:
         tk = self._tk
@@ -69,6 +71,12 @@ class OverlayWindowService:
         root.geometry(
             f"{self._settings.width}x{self._settings.height}+{self._settings.x}+{self._settings.y}"
         )
+        icon_path = get_overlay_icon_path()
+        if icon_path is not None:
+            try:
+                root.iconbitmap(default=str(icon_path))
+            except Exception:
+                pass
         root.overrideredirect(True)
         root.attributes("-topmost", self._settings.always_on_top)
         root.attributes("-alpha", self._settings.opacity)
@@ -244,6 +252,7 @@ class OverlayWindowService:
             length=max(150, self._settings.width // 2),
         ).pack(side="left", padx=(6, 0))
 
+        self._last_talk_level_sent = self._talk_level_var.get()
         self._on_talk_level_changed(self._talk_level_var.get())
         self._apply_visibility()
         root.after(70, self._process_event_queue)
@@ -257,11 +266,7 @@ class OverlayWindowService:
     def _process_event_queue(self) -> None:
         if self._root is None:
             return
-        for _ in range(40):
-            try:
-                topic, payload = self._event_queue.get_nowait()
-            except queue.Empty:
-                break
+        for topic, payload in self._event_buffer.pop_batch(limit=40):
             self._handle_event(topic, payload)
         self._root.after(70, self._process_event_queue)
 
@@ -333,6 +338,9 @@ class OverlayWindowService:
             level = int(float(raw))
         except (TypeError, ValueError):
             return
+        if self._last_talk_level_sent == level:
+            return
+        self._last_talk_level_sent = level
         self._on_talk_level_changed(level)
 
     def _set_status_color(self, color: str) -> None:
@@ -493,4 +501,5 @@ class OverlayWindowService:
                 )
             )
             self._root.destroy()
+        self._event_buffer.clear()
         self._on_close_requested()

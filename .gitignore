@@ -89,3 +89,4 @@ __pypackages__/
 *.tmp
 *.bak
 .overlay_settings.json
+*.spec
