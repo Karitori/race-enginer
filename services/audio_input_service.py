@@ -1,4 +1,5 @@
 import asyncio
+import ctypes
 import logging
 import os
 import tempfile
@@ -64,6 +65,20 @@ def _default_torch_device() -> str:
     except Exception:
         pass
     return "cpu"
+
+
+def _cuda_runtime_probe() -> tuple[bool, str]:
+    """
+    Lightweight CUDA DLL probe for Windows STT runtime.
+    Faster-Whisper GPU path on Windows needs CUDA 12 runtime DLLs.
+    """
+    if os.name != "nt":
+        return True, ""
+    try:
+        ctypes.WinDLL("cublas64_12.dll")
+    except Exception as exc:
+        return False, f"missing cublas64_12.dll ({exc})"
+    return True, ""
 
 
 class AudioInputService:
@@ -280,6 +295,24 @@ class AudioInputService:
             if self.energy_threshold is not None:
                 self._recognizer.energy_threshold = max(10, self.energy_threshold)
             self._build_microphone()
+
+            if self.whisper_device == "cuda":
+                cuda_ok, cuda_reason = _cuda_runtime_probe()
+                if not cuda_ok:
+                    if self.auto_cpu_fallback:
+                        logger.warning(
+                            "cuda runtime unavailable for STT (%s); starting on cpu/int8.",
+                            cuda_reason,
+                        )
+                        self.whisper_device = "cpu"
+                        self.whisper_compute_type = "int8"
+                        self._cpu_fallback_activated = True
+                    else:
+                        logger.warning(
+                            "cuda runtime unavailable for STT (%s); STT may fail without fallback.",
+                            cuda_reason,
+                        )
+
             if not self._initialize_whisper_model():
                 self._available = False
                 return

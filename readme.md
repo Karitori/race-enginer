@@ -130,6 +130,7 @@ Temperatures can still be set globally (`LLM_TEMPERATURE`) or per role (`STRATEG
   - optional detection tuning: `VOICE_STT_DYNAMIC_ENERGY_THRESHOLD=true`, `VOICE_STT_ENERGY_THRESHOLD=300`.
   - PTT immediate capture chunk: `VOICE_STT_PTT_CHUNK_SEC=2.2`.
   - optional reliability fallback: `VOICE_STT_AUTO_CPU_FALLBACK=true` (switches to CPU/int8 if CUDA transcription errors keep happening).
+  - if logs show missing `cublas64_12.dll`, your CUDA runtime is incomplete; keep STT on CPU/int8 or install CUDA 12 runtime DLLs.
   - comms control mode: `VOICE_STT_CONTROL_MODE=toggle|ptt|always` (recommended: `toggle` or `ptt`).
   - for toggle mode startup state: `VOICE_STT_TOGGLE_DEFAULT_ON=false`.
   - optional VAD filter remains configurable (`VOICE_STT_WHISPER_VAD_FILTER=false` recommended for race-radio realism).
