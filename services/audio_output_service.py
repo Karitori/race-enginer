@@ -4,7 +4,6 @@ import os
 import re
 import tempfile
 import threading
-import time
 import wave
 from typing import Any
 
@@ -62,6 +61,36 @@ def _parse_style_hint(raw: str | None, fallback: str) -> str:
     if cleaned in {"warning", "strategy", "encouragement", "info"}:
         return cleaned
     return fallback
+
+
+def _split_tts_chunks(text: str, max_chars: int = 110) -> list[str]:
+    """Split text into short chunks so barge-in can interrupt between chunks safely."""
+    sentence_parts = [p.strip() for p in re.split(r"(?<=[.!?])\s+", text) if p.strip()]
+    if not sentence_parts:
+        sentence_parts = [text.strip()]
+
+    chunks: list[str] = []
+    for part in sentence_parts:
+        if len(part) <= max_chars:
+            chunks.append(part)
+            continue
+
+        words = part.split()
+        current: list[str] = []
+        current_len = 0
+        for word in words:
+            word_len = len(word) + (1 if current else 0)
+            if current and current_len + word_len > max_chars:
+                chunks.append(" ".join(current))
+                current = [word]
+                current_len = len(word)
+            else:
+                current.append(word)
+                current_len += word_len
+        if current:
+            chunks.append(" ".join(current))
+
+    return chunks or [text]
 
 
 class AudioOutputService:
@@ -240,73 +269,48 @@ class AudioOutputService:
         if self._interrupt_event.is_set():
             return
 
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as wav_file:
-            wav_path = wav_file.name
-
-        try:
-            import numpy as np
-
-            samples, sample_rate = self._kokoro_tts.create(
-                message,
-                voice=voice,
-                speed=speed,
-                lang=self._kokoro_lang,
-            )
-            sample_array = np.asarray(samples, dtype=np.float32).flatten()
-            if sample_array.size == 0:
+        chunks = _split_tts_chunks(message)
+        for chunk in chunks:
+            if self._interrupt_event.is_set():
                 return
 
-            audio_pcm = np.clip(sample_array, -1.0, 1.0)
-            audio_pcm = (audio_pcm * 32767.0).astype(np.int16)
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as wav_file:
+                wav_path = wav_file.name
 
-            with wave.open(wav_path, "wb") as wav_writer:
-                wav_writer.setnchannels(1)
-                wav_writer.setsampwidth(2)
-                wav_writer.setframerate(int(sample_rate))
-                wav_writer.writeframes(audio_pcm.tobytes())
-
-            duration_sec = max(0.05, float(sample_array.size) / float(sample_rate))
             try:
+                import numpy as np
                 import winsound
 
-                winsound.PlaySound(
-                    wav_path,
-                    winsound.SND_FILENAME | winsound.SND_ASYNC,
+                samples, sample_rate = self._kokoro_tts.create(
+                    chunk,
+                    voice=voice,
+                    speed=speed,
+                    lang=self._kokoro_lang,
                 )
-                playback_deadline = time.monotonic() + duration_sec + 0.05
-                while time.monotonic() < playback_deadline:
-                    if self._interrupt_event.is_set():
-                        break
-                    time.sleep(0.02)
-                self._stop_playback_sync()
+                sample_array = np.asarray(samples, dtype=np.float32).flatten()
+                if sample_array.size == 0:
+                    continue
+
+                audio_pcm = np.clip(sample_array, -1.0, 1.0)
+                audio_pcm = (audio_pcm * 32767.0).astype(np.int16)
+
+                with wave.open(wav_path, "wb") as wav_writer:
+                    wav_writer.setnchannels(1)
+                    wav_writer.setsampwidth(2)
+                    wav_writer.setframerate(int(sample_rate))
+                    wav_writer.writeframes(audio_pcm.tobytes())
+
+                winsound.PlaySound(wav_path, winsound.SND_FILENAME)
             except Exception as exc:
-                logger.warning("kokoro produced audio but playback failed: %s", exc)
-        except Exception as exc:
-            logger.error("kokoro TTS failed: %s", exc)
-        finally:
-            try:
-                os.remove(wav_path)
-            except OSError:
-                pass
-
-    def _stop_playback_sync(self) -> None:
-        try:
-            import winsound
-
-            try:
-                winsound.PlaySound(None, winsound.SND_PURGE)
-            except Exception:
-                pass
-            try:
-                winsound.PlaySound(None, 0)
-            except Exception:
-                pass
-        except Exception:
-            pass
+                logger.error("kokoro TTS chunk failed: %s", exc)
+            finally:
+                try:
+                    os.remove(wav_path)
+                except OSError:
+                    pass
 
     def interrupt_playback(self) -> bool:
         self._interrupt_event.set()
-        self._stop_playback_sync()
         return True
 
     def stop(self) -> None:
