@@ -2,6 +2,8 @@ import asyncio
 import logging
 import os
 import re
+import subprocess
+import sys
 import tempfile
 import threading
 import wave
@@ -173,6 +175,15 @@ class AudioOutputService:
             logger.warning("kokoro voices file not found: %s", self._kokoro_voices_path)
             return
 
+        probe_ok, probe_error = self._probe_kokoro_runtime()
+        if not probe_ok:
+            logger.warning(
+                "kokoro runtime probe failed; disabling TTS backend to keep app stable. %s",
+                probe_error or "",
+            )
+            self._available = False
+            return
+
         try:
             from kokoro_onnx import Kokoro
 
@@ -195,6 +206,39 @@ class AudioOutputService:
         except Exception as exc:
             logger.warning("kokoro initialization failed: %s", exc)
             self._available = False
+
+    @staticmethod
+    def _probe_kokoro_runtime() -> tuple[bool, str]:
+        """
+        Probe kokoro/onnxruntime import in a subprocess so native crashes do not kill
+        the main app process (seen on some Windows + Python 3.13 combinations).
+        """
+        skip_probe = _parse_bool(os.getenv("VOICE_KOKORO_SKIP_PROBE"), False)
+        if skip_probe:
+            return True, ""
+
+        command = [
+            sys.executable,
+            "-c",
+            "import onnxruntime, kokoro_onnx; print('kokoro-probe-ok')",
+        ]
+        try:
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=20,
+            )
+        except Exception as exc:
+            return False, f"probe execution failed: {exc}"
+
+        if result.returncode == 0:
+            return True, ""
+
+        stderr = (result.stderr or "").strip()
+        stdout = (result.stdout or "").strip()
+        details = stderr or stdout or f"exit_code={result.returncode}"
+        return False, details
 
     def _resolve_kokoro_profile(
         self,
