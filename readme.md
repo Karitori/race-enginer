@@ -40,7 +40,7 @@ This project is now `uv` managed.
 - Python 3.10+
 - `uv`
 - Optional: microphone/speakers for voice output
-- LLM provider package credentials in `.env` (for your selected LangChain provider)
+- Local Ollama runtime with `nemotron-mini:4b` model available
 
 ## Setup
 
@@ -116,13 +116,13 @@ Temperatures can still be set globally (`LLM_TEMPERATURE`) or per role (`STRATEG
 
 ## Voice & Audio
 
-- TTS is locked to local Pocket-TTS:
-  - `VOICE_TTS_BACKEND=pocket`
-  - `VOICE_POCKET_CONFIG_PATH=...` (required local YAML with local weight/tokenizer paths)
-  - `VOICE_POCKET_AUDIO_PROMPT_PATH=...` (required local `.wav` or `.safetensors`)
-  - optional: `VOICE_POCKET_DEVICE`, `VOICE_POCKET_TEMP`, `VOICE_POCKET_MAX_TOKENS`
-- Optional mic STT is locked to local Whisper via `VOICE_ENABLE_STT=true` and `VOICE_STT_BACKEND=whisper`.
-  - `VOICE_STT_WHISPER_MODEL_PATH` is required and must point to a local Faster-Whisper model directory (for example `large-v3` converted model files).
+- TTS is locked to local Kokoro:
+  - `VOICE_TTS_BACKEND=kokoro`
+  - `VOICE_KOKORO_MODEL_PATH=...` (required local `.onnx`)
+  - `VOICE_KOKORO_VOICES_PATH=...` (required local voices `.bin`)
+  - optional: `VOICE_KOKORO_VOICE`, `VOICE_KOKORO_LANG`, `VOICE_KOKORO_SPEED`
+- Optional mic STT is locked to Whisper Turbo via `VOICE_ENABLE_STT=true` and `VOICE_STT_BACKEND=whisper`.
+  - `VOICE_STT_WHISPER_MODEL=turbo` (or a local Turbo model path)
   - optional: `VOICE_STT_WHISPER_DEVICE=cuda`, `VOICE_STT_WHISPER_COMPUTE_TYPE=float16`.
 - Voice queue summarization now uses structured LLM output instead of manual JSON parsing.
 

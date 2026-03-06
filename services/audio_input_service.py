@@ -39,6 +39,10 @@ def _is_remote_resource(path_or_uri: str) -> bool:
     )
 
 
+def _looks_like_path(raw: str) -> bool:
+    return "\\" in raw or "/" in raw or ":" in raw
+
+
 def _default_torch_device() -> str:
     try:
         import torch
@@ -61,7 +65,7 @@ class AudioInputService:
         self.phrase_limit_sec = _parse_float(os.getenv("VOICE_STT_PHRASE_LIMIT_SEC"), 6.0)
         self.ambient_sec = _parse_float(os.getenv("VOICE_STT_AMBIENT_SEC"), 0.4)
 
-        self.whisper_model_path = (os.getenv("VOICE_STT_WHISPER_MODEL_PATH", "") or "").strip()
+        self.whisper_model = (os.getenv("VOICE_STT_WHISPER_MODEL", "turbo") or "turbo").strip()
         self.whisper_device = (
             os.getenv("VOICE_STT_WHISPER_DEVICE", _default_torch_device())
             or _default_torch_device()
@@ -82,6 +86,7 @@ class AudioInputService:
         self._recognizer: Any = None
         self._microphone: Any = None
         self._whisper_model: Any = None
+        self._whisper_model_ref: str = "turbo"
         self._ambient_calibrated = False
         self._setup_backend()
 
@@ -104,16 +109,28 @@ class AudioInputService:
         )
 
     def _setup_whisper(self) -> None:
-        model_path = self.whisper_model_path
-        if not model_path:
-            logger.warning("VOICE_STT_WHISPER_MODEL_PATH is required for whisper backend.")
+        model_value = self.whisper_model
+        if not model_value:
+            logger.warning("VOICE_STT_WHISPER_MODEL must be set to 'turbo' or a local turbo path.")
             return
-        if _is_remote_resource(model_path):
+        if _is_remote_resource(model_value):
             logger.warning("whisper backend is local-only; remote model URIs are not allowed.")
             return
-        if not os.path.exists(model_path):
-            logger.warning("whisper model path not found: %s", model_path)
-            return
+
+        if _looks_like_path(model_value):
+            if not os.path.exists(model_value):
+                logger.warning("whisper model path not found: %s", model_value)
+                return
+            self._whisper_model_ref = model_value
+        else:
+            model_key = model_value.lower()
+            if model_key not in {"turbo", "large-v3-turbo"}:
+                logger.warning(
+                    "unsupported VOICE_STT_WHISPER_MODEL=%s; only Whisper Turbo is allowed",
+                    model_value,
+                )
+                return
+            self._whisper_model_ref = "turbo"
 
         try:
             import speech_recognition as sr  # type: ignore
@@ -123,15 +140,15 @@ class AudioInputService:
             self._recognizer = sr.Recognizer()
             self._microphone = sr.Microphone()
             self._whisper_model = WhisperModel(
-                model_size_or_path=model_path,
+                model_size_or_path=self._whisper_model_ref,
                 device=self.whisper_device,
                 compute_type=self.whisper_compute_type,
                 local_files_only=True,
             )
             self._available = True
             logger.info(
-                "whisper STT backend enabled (model=%s, device=%s, compute_type=%s)",
-                model_path,
+                "whisper turbo STT backend enabled (model=%s, device=%s, compute_type=%s)",
+                self._whisper_model_ref,
                 self.whisper_device,
                 self.whisper_compute_type,
             )

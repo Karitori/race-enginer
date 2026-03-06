@@ -10,18 +10,18 @@ def test_audio_input_disabled_by_default(monkeypatch):
     assert not service.available
 
 
-def test_audio_input_whisper_disabled_without_model_path(monkeypatch):
+def test_audio_input_whisper_disabled_without_turbo_model(monkeypatch):
     monkeypatch.setenv("VOICE_ENABLE_STT", "true")
     monkeypatch.setenv("VOICE_STT_BACKEND", "whisper")
-    monkeypatch.delenv("VOICE_STT_WHISPER_MODEL_PATH", raising=False)
+    monkeypatch.setenv("VOICE_STT_WHISPER_MODEL", "")
     service = AudioInputService()
     assert not service.available
 
 
-def test_audio_input_whisper_rejects_remote_model_path(monkeypatch):
+def test_audio_input_whisper_rejects_remote_model_source(monkeypatch):
     monkeypatch.setenv("VOICE_ENABLE_STT", "true")
     monkeypatch.setenv("VOICE_STT_BACKEND", "whisper")
-    monkeypatch.setenv("VOICE_STT_WHISPER_MODEL_PATH", "hf://openai/whisper-large-v3")
+    monkeypatch.setenv("VOICE_STT_WHISPER_MODEL", "hf://openai/whisper-large-v3-turbo")
     service = AudioInputService()
     assert not service.available
 
@@ -47,20 +47,20 @@ async def test_audio_output_speak_noop_when_disabled(monkeypatch):
     await service.speak("Test message")
 
 
-def test_audio_output_pocket_disabled_without_config(monkeypatch):
+def test_audio_output_kokoro_disabled_without_model_files(monkeypatch):
     monkeypatch.setenv("VOICE_ENABLE_TTS", "true")
-    monkeypatch.setenv("VOICE_TTS_BACKEND", "pocket")
-    monkeypatch.delenv("VOICE_POCKET_CONFIG_PATH", raising=False)
-    monkeypatch.delenv("VOICE_POCKET_AUDIO_PROMPT_PATH", raising=False)
+    monkeypatch.setenv("VOICE_TTS_BACKEND", "kokoro")
+    monkeypatch.delenv("VOICE_KOKORO_MODEL_PATH", raising=False)
+    monkeypatch.delenv("VOICE_KOKORO_VOICES_PATH", raising=False)
     service = AudioOutputService()
     assert not service.available
 
 
-def test_audio_output_pocket_rejects_remote_sources(monkeypatch):
+def test_audio_output_kokoro_rejects_remote_sources(monkeypatch):
     monkeypatch.setenv("VOICE_ENABLE_TTS", "true")
-    monkeypatch.setenv("VOICE_TTS_BACKEND", "pocket")
-    monkeypatch.setenv("VOICE_POCKET_CONFIG_PATH", "hf://kyutai/pocket-tts/config.yaml")
-    monkeypatch.setenv("VOICE_POCKET_AUDIO_PROMPT_PATH", "hf://voices/alba.safetensors")
+    monkeypatch.setenv("VOICE_TTS_BACKEND", "kokoro")
+    monkeypatch.setenv("VOICE_KOKORO_MODEL_PATH", "hf://hexgrad/kokoro/model.onnx")
+    monkeypatch.setenv("VOICE_KOKORO_VOICES_PATH", "hf://hexgrad/kokoro/voices-v1.0.bin")
     service = AudioOutputService()
     assert not service.available
 

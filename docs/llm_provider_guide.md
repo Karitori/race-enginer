@@ -25,5 +25,5 @@ Any other configured provider/model is ignored and coerced back to this pair.
 - Role-specific provider/model env overrides are no longer used.
 - Only temperature remains role-tunable (`STRATEGY_TEMPERATURE`, `ADVISOR_TEMPERATURE`, `VOICE_TEMPERATURE`).
 - STT and TTS remain local-only:
-  - STT: Whisper large-v3 via `faster-whisper`
-  - TTS: Pocket-TTS
+  - STT: Whisper Turbo via `faster-whisper`
+  - TTS: Kokoro via `kokoro-onnx`
