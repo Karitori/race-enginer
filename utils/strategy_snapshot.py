@@ -53,7 +53,7 @@ def collect_strategy_snapshot(repository: TelemetryRepository) -> dict[str, Any]
         """
         SELECT weather, track_temperature, air_temperature, rain_percentage,
                pit_stop_window_ideal_lap, pit_stop_window_latest_lap,
-               safety_car_status, total_laps
+               safety_car_status, total_laps, track_id
         FROM session_data ORDER BY timestamp DESC LIMIT 5
         """
     )
@@ -128,6 +128,17 @@ def collect_strategy_snapshot(repository: TelemetryRepository) -> dict[str, Any]
 
     ers_pct = max(0.0, min(100.0, _to_float(latest_status[4]) / 4_000_000.0 * 100.0))
 
+    compound_codes_seen = []
+    for row in status_rows:
+        code = _to_int(row[2], default=-1)
+        if code > 0 and code not in compound_codes_seen:
+            compound_codes_seen.append(code)
+    wet_codes = {7, 8}
+    dry_compounds_used = [code for code in compound_codes_seen if code not in wet_codes]
+    wet_or_intermediate_used = any(code in wet_codes for code in compound_codes_seen)
+    sets_used_estimate = max(1, _to_int(latest_lap[5], default=0) + 1)
+    track_id = _to_int(latest_session[8], default=-1)
+
     return {
         "ready": True,
         "stint": {
@@ -141,6 +152,9 @@ def collect_strategy_snapshot(repository: TelemetryRepository) -> dict[str, Any]
             "wear_rear_avg_pct": rear_avg_wear,
             "wear_max_pct": max_wear,
             "wear_rate_pct_per_sample": wear_rate,
+            "compound_codes_seen": compound_codes_seen,
+            "dry_compounds_used_count": len(dry_compounds_used),
+            "wet_or_intermediate_used": wet_or_intermediate_used,
         },
         "energy": {
             "fuel_kg": _to_float(latest_status[0]),
@@ -158,6 +172,7 @@ def collect_strategy_snapshot(repository: TelemetryRepository) -> dict[str, Any]
             "total_laps": total_laps,
             "laps_remaining": laps_remaining,
             "pit_stops": _to_int(latest_lap[5]),
+            "sets_used_estimate": sets_used_estimate,
         },
         "pace": {
             "recent_avg_lap_ms": recent_avg_ms,
@@ -174,6 +189,8 @@ def collect_strategy_snapshot(repository: TelemetryRepository) -> dict[str, Any]
             "pit_window_latest_lap": pit_window_latest,
             "in_pit_window": in_pit_window,
             "safety_car_status": _to_int(latest_session[6]),
+            "track_id": track_id,
+            "is_monaco": track_id == 5,
         },
         "signals": {
             "recent_event_codes": recent_event_codes,

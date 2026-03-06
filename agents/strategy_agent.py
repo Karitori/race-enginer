@@ -19,6 +19,8 @@ from nodes.strategy_analysis_nodes import (
     make_tire_wall_node,
     make_energy_wall_node,
     make_race_control_node,
+    make_regulations_node,
+    make_strategy_wall_node,
     make_racecraft_node,
     make_synthesize_decision_node,
 )
@@ -49,6 +51,8 @@ class StrategyAgent:
         graph.add_node("tire_wall", make_tire_wall_node())
         graph.add_node("energy_wall", make_energy_wall_node())
         graph.add_node("race_control", make_race_control_node())
+        graph.add_node("regulations", make_regulations_node())
+        graph.add_node("strategy_wall", make_strategy_wall_node())
         graph.add_node("racecraft", make_racecraft_node())
         graph.add_node("synthesize", make_synthesize_decision_node(self._llm_runner))
 
@@ -56,7 +60,9 @@ class StrategyAgent:
         graph.add_edge("collect_metrics", "tire_wall")
         graph.add_edge("tire_wall", "energy_wall")
         graph.add_edge("energy_wall", "race_control")
-        graph.add_edge("race_control", "racecraft")
+        graph.add_edge("race_control", "regulations")
+        graph.add_edge("regulations", "strategy_wall")
+        graph.add_edge("strategy_wall", "racecraft")
         graph.add_edge("racecraft", "synthesize")
         graph.add_edge("synthesize", END)
         self._graph = graph.compile()

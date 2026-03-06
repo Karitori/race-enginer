@@ -8,6 +8,9 @@ HIGH_TIRE_WEAR_PCT = 70.0
 SAFETY_CAR_PIT_WEAR_THRESHOLD_PCT = 45.0
 DEGRADATION_RISING_PCT_PER_SAMPLE = 0.35
 
+DRY_COMPOUND_MIN_USED = 2
+MONACO_MIN_SETS_USED = 3
+
 RAIN_TO_INTERMEDIATE_PCT = 50
 RAIN_TO_WET_PCT = 75
 RAIN_ALERT_PCT = 55
@@ -23,6 +26,11 @@ OVERTAKE_GAP_MS = 1300
 AGGRESSIVE_OVERTAKE_GAP_MS = 900
 
 PACE_DROP_ALERT_MS = 350.0
+PACE_UNDERCUT_ALERT_MS = 220.0
+PACE_OVERCUT_GOOD_MS = -120.0
+UNDERCUT_WINDOW_GAP_MS = 2200
+OVERCUT_WINDOW_GAP_MS = 2600
+LATE_RACE_LAPS = 8
 
 
 def compound_name(compound_code: int) -> str:
@@ -50,4 +58,3 @@ def recommend_next_compound(current_compound: int, rain_pct: int, laps_remaining
     if current_compound == 18:
         return 17  # Hard -> Medium
     return 17
-

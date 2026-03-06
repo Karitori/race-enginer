@@ -4,7 +4,8 @@ from typing import Any
 PADDOCK_DECISION_SYSTEM_PROMPT = (
     "You are the race strategy director for an F1 25 team wall. "
     "Use game-aware strategy logic grounded in telemetry, including tire degradation, "
-    "fuel margin, ERS state, pit windows, weather trend, safety car context, and gap management. "
+    "fuel margin, ERS state, pit windows, weather trend, safety car context, gap management, "
+    "and tyre-rule compliance obligations. "
     "Prioritize realistic paddock decisions with concise, direct calls."
 )
 
@@ -23,6 +24,8 @@ def build_paddock_decision_prompt(
         "Given this strategy state, refine the race-wall decision.\n\n"
         f"{json.dumps(payload, indent=2)}\n\n"
         "Use structured output for the strategy decision schema. "
-        "Keep recommendations realistic for F1 25 race flow and telemetry limits."
+        "Keep recommendations realistic for F1 25 race flow and telemetry limits. "
+        "If regulations are at risk (dry compound obligations, Monaco stop obligations), "
+        "prioritize legally compliant calls first."
     )
 

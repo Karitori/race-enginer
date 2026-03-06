@@ -9,6 +9,10 @@ The Race Engineer system is an intelligent assistant designed to act as an autom
 - **Responsibility:** Single home for all Pydantic data contracts (telemetry packets, API payloads, strategy/insight schemas).
 - **Purpose:** Keeps schema evolution centralized and avoids model duplication across `routes`, `services`, and `db`.
 
+### Track Strategy Profiles (`utils/track_strategy_profiles.py`)
+- **Responsibility:** Encodes circuit-specific strategic tendencies (overtake difficulty, pit-loss profile, undercut bias, weather volatility).
+- **Purpose:** Prevents one-size-fits-all race calls by adapting strategy/racecraft decisions to each track.
+
 ### 1. Telemetry Parser (`services/mock_telemetry_service.py`, `services/real_telemetry_service.py`)
 - **Responsibility:** Ingest raw telemetry data from the racing simulator (via UDP stream similar to `Fredrik2002/f1-25-telemetry-application`), decode packets, and publish normalized data.
 - **Outputs:** Normalized `TelemetryTick` events.
@@ -21,6 +25,7 @@ The Race Engineer system is an intelligent assistant designed to act as an autom
 
 ### 3. Backend Analyst Team (`agents/strategy_agent.py`)
 - **Responsibility:** Runs continuously in-process in the background. It periodically queries DuckDB to identify trends (e.g., tire degradation over the last 5 laps, pace drop-off, fuel usage vs target), applies risk-detection nodes, and publishes strategic advice.
+- **Current desks in graph:** tire wall, energy wall, race control, regulations/compliance, strategy wall (undercut/overcut opportunities), and racecraft.
 - **Inputs:** SQL aggregates from DuckDB.
 - **Outputs:** `StrategyInsight` events published to the Event Bus.
 

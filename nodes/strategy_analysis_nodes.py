@@ -7,22 +7,30 @@ from utils.f1_25_strategy_knowledge import (
     AGGRESSIVE_OVERTAKE_GAP_MS,
     CRITICAL_TIRE_WEAR_PCT,
     DEGRADATION_RISING_PCT_PER_SAMPLE,
+    DRY_COMPOUND_MIN_USED,
     ERS_ATTACK_PCT,
     ERS_LOW_PCT,
     FUEL_CRITICAL_BUFFER_LAPS,
     FUEL_LOW_BUFFER_LAPS,
     HIGH_TIRE_WEAR_PCT,
+    LATE_RACE_LAPS,
+    MONACO_MIN_SETS_USED,
     OVERTAKE_GAP_MS,
     PACE_DROP_ALERT_MS,
+    PACE_OVERCUT_GOOD_MS,
+    PACE_UNDERCUT_ALERT_MS,
     RAIN_ALERT_PCT,
     RAIN_HEAVY_PCT,
     RAIN_TO_INTERMEDIATE_PCT,
     RAIN_TO_WET_PCT,
     RAIN_TREND_ALERT_DELTA,
     SAFETY_CAR_PIT_WEAR_THRESHOLD_PCT,
+    UNDERCUT_WINDOW_GAP_MS,
+    OVERCUT_WINDOW_GAP_MS,
     compound_name,
     recommend_next_compound,
 )
+from utils.track_strategy_profiles import get_track_strategy_profile
 
 
 class TeamCall(TypedDict, total=False):
@@ -381,21 +389,336 @@ def make_race_control_node():
     return _race_control_node
 
 
+def make_regulations_node():
+    async def _regulations_node(state: StrategyState) -> StrategyState:
+        snapshot = state.get("snapshot", {})
+        if not snapshot.get("ready"):
+            return _append_call(
+                state,
+                {
+                    "desk": "regulations",
+                    "priority": 1,
+                    "title": "Regulation check deferred",
+                    "action": "Hold compliance checks until full telemetry context is available.",
+                    "rationale": "Snapshot not ready for tyre-rule validation.",
+                    "confidence": 0.35,
+                    "risk_tags": ["telemetry_unavailable"],
+                },
+            )
+
+        stint = snapshot.get("stint", {})
+        race = snapshot.get("race", {})
+        conditions = snapshot.get("conditions", {})
+
+        laps_remaining = int(race.get("laps_remaining", 0))
+        current_lap = int(race.get("current_lap", 0))
+        total_laps = max(1, int(race.get("total_laps", 1)))
+        race_progress = current_lap / total_laps
+        if total_laps <= 1:
+            return _append_call(
+                state,
+                {
+                    "desk": "regulations",
+                    "priority": 1,
+                    "title": "Regulation checks inactive",
+                    "action": "Skip tyre-rule enforcement outside race-format sessions.",
+                    "rationale": "Session length is not race-like for strategy compliance checks.",
+                    "confidence": 0.75,
+                    "risk_tags": [],
+                },
+            )
+
+        dry_compounds_used = int(stint.get("dry_compounds_used_count", 0))
+        wet_or_intermediate_used = bool(stint.get("wet_or_intermediate_used", False))
+        sets_used_estimate = int(race.get("sets_used_estimate", 1))
+        rain_pct = int(conditions.get("rain_pct", 0))
+        is_monaco = bool(conditions.get("is_monaco", False))
+
+        obligations: list[str] = []
+        risk_tags: list[str] = []
+
+        dry_rule_active = (rain_pct < RAIN_TO_INTERMEDIATE_PCT) and not wet_or_intermediate_used
+        if dry_rule_active and dry_compounds_used < DRY_COMPOUND_MIN_USED:
+            obligations.append("second dry compound still mandatory")
+            risk_tags.extend(["regulation_risk", "dry_compound_requirement"])
+
+        if is_monaco and sets_used_estimate < MONACO_MIN_SETS_USED:
+            missing_sets = MONACO_MIN_SETS_USED - sets_used_estimate
+            obligations.append(
+                f"Monaco minimum tyre-set requirement missing {missing_sets} set(s)"
+            )
+            risk_tags.extend(["regulation_risk", "monaco_two_stop_requirement"])
+
+        if obligations:
+            if laps_remaining <= LATE_RACE_LAPS:
+                priority = 5
+            elif race_progress >= 0.6:
+                priority = 4
+            else:
+                priority = 3
+
+            action = (
+                "Schedule required compliance stop sequence now. "
+                "Prioritize legal tyre usage before final stint."
+            )
+            if is_monaco:
+                action = (
+                    "Lock a Monaco-compliant two-stop sequence now and avoid getting trapped "
+                    "behind traffic at end of race."
+                )
+
+            return _append_call(
+                state,
+                {
+                    "desk": "regulations",
+                    "priority": priority,
+                    "title": "Tyre regulation compliance risk",
+                    "action": action,
+                    "rationale": "; ".join(obligations),
+                    "confidence": 0.9 if priority >= 4 else 0.8,
+                    "risk_tags": risk_tags,
+                },
+            )
+
+        return _append_call(
+            state,
+            {
+                "desk": "regulations",
+                "priority": 1,
+                "title": "Tyre regulation compliance healthy",
+                "action": "Maintain legal tyre trajectory and review after each stop.",
+                "rationale": "Current usage profile remains compliant for race conditions.",
+                "confidence": 0.7,
+                "risk_tags": [],
+            },
+        )
+
+    return _regulations_node
+
+
+def make_strategy_wall_node():
+    async def _strategy_wall_node(state: StrategyState) -> StrategyState:
+        snapshot = state.get("snapshot", {})
+        race = snapshot.get("race", {})
+        pace = snapshot.get("pace", {})
+        stint = snapshot.get("stint", {})
+        energy = snapshot.get("energy", {})
+        conditions = snapshot.get("conditions", {})
+
+        in_pit_window = bool(conditions.get("in_pit_window", False))
+        safety_car_status = int(conditions.get("safety_car_status", 0))
+        gap_front_ms = int(race.get("gap_front_ms", 99999))
+        laps_remaining = int(race.get("laps_remaining", 0))
+        pace_delta_ms = pace.get("pace_delta_ms")
+        wear_max = float(stint.get("wear_max_pct", 0.0))
+        wear_rate = float(stint.get("wear_rate_pct_per_sample", 0.0))
+        ers_pct = float(energy.get("ers_pct", 0.0))
+        fuel_laps = float(energy.get("fuel_laps_remaining", 0.0))
+        track_id = int(conditions.get("track_id", -1))
+        track_profile = get_track_strategy_profile(track_id)
+        track_name = str(track_profile["name"])
+        overtake_difficulty = float(track_profile["overtake_difficulty"])
+        undercut_bias = float(track_profile["undercut_bias"])
+
+        undercut_gap_window = max(900, int(UNDERCUT_WINDOW_GAP_MS * undercut_bias))
+        overcut_gap_window = max(
+            1800,
+            int(
+                OVERCUT_WINDOW_GAP_MS
+                * (1.05 if overtake_difficulty >= 0.75 else 0.95 if overtake_difficulty <= 0.4 else 1.0)
+            ),
+        )
+
+        if safety_car_status > 0 and in_pit_window and wear_max >= 35.0:
+            return _append_call(
+                state,
+                {
+                    "desk": "strategy_wall",
+                    "priority": 4,
+                    "title": "Neutralized pit-loss opportunity",
+                    "action": "Box now while pit-loss is reduced by race neutralization.",
+                    "rationale": f"Track neutralized at {track_name}; tyre condition supports strategic stop.",
+                    "confidence": 0.84,
+                    "risk_tags": ["pit_opportunity", "neutralized_race"],
+                },
+            )
+
+        if (
+            safety_car_status == 0
+            and
+            in_pit_window
+            and 0 < gap_front_ms <= undercut_gap_window
+            and (
+                wear_rate >= DEGRADATION_RISING_PCT_PER_SAMPLE
+                or (
+                    isinstance(pace_delta_ms, (int, float))
+                    and float(pace_delta_ms) >= PACE_UNDERCUT_ALERT_MS
+                )
+            )
+        ):
+            priority = 5 if gap_front_ms <= 1200 and wear_max >= HIGH_TIRE_WEAR_PCT else 4
+            return _append_call(
+                state,
+                {
+                    "desk": "strategy_wall",
+                    "priority": priority,
+                    "title": "Undercut window open",
+                    "action": "Box this lap to execute undercut and jump the car ahead.",
+                    "rationale": (
+                        f"Front gap {gap_front_ms/1000:.3f}s at {track_name} with degrading pace profile."
+                    ),
+                    "confidence": 0.86,
+                    "risk_tags": ["undercut_window", "pit_now"],
+                },
+            )
+
+        if (
+            safety_car_status == 0
+            and
+            in_pit_window
+            and overtake_difficulty >= 0.78
+            and 0 < gap_front_ms <= int(undercut_gap_window * 0.9)
+            and wear_max >= (HIGH_TIRE_WEAR_PCT - 8.0)
+        ):
+            return _append_call(
+                state,
+                {
+                    "desk": "strategy_wall",
+                    "priority": 4,
+                    "title": "Track-position priority stop",
+                    "action": "Box now to secure track position where overtaking probability is low.",
+                    "rationale": (
+                        f"{track_name} has high overtake difficulty; proactive stop protects race outcome."
+                    ),
+                    "confidence": 0.79,
+                    "risk_tags": ["track_position_priority", "pit_now"],
+                },
+            )
+
+        if (
+            safety_car_status == 0
+            and
+            in_pit_window
+            and gap_front_ms >= overcut_gap_window
+            and wear_max < HIGH_TIRE_WEAR_PCT
+            and isinstance(pace_delta_ms, (int, float))
+            and float(pace_delta_ms) <= PACE_OVERCUT_GOOD_MS
+            and overtake_difficulty < 0.82
+        ):
+            return _append_call(
+                state,
+                {
+                    "desk": "strategy_wall",
+                    "priority": 3,
+                    "title": "Overcut candidate",
+                    "action": "Extend stint by one lap to target overcut into cleaner air.",
+                    "rationale": (
+                        f"Gap {gap_front_ms/1000:.3f}s at {track_name} with positive pace trend {float(pace_delta_ms):.0f}ms."
+                    ),
+                    "confidence": 0.76,
+                    "risk_tags": ["overcut_window"],
+                },
+            )
+
+        if (
+            safety_car_status == 0
+            and
+            laps_remaining <= LATE_RACE_LAPS
+            and ers_pct >= ERS_ATTACK_PCT
+            and fuel_laps + FUEL_CRITICAL_BUFFER_LAPS >= laps_remaining
+        ):
+            return _append_call(
+                state,
+                {
+                    "desk": "strategy_wall",
+                    "priority": 3,
+                    "title": "Late-race attack phase",
+                    "action": "Bias strategy to track position and convert ERS into overtaking attempts.",
+                    "rationale": f"End-race fuel/ERS envelope supports an aggressive finish at {track_name}.",
+                    "confidence": 0.74,
+                    "risk_tags": ["late_race_attack"],
+                },
+            )
+
+        return _append_call(
+            state,
+            {
+                "desk": "strategy_wall",
+                "priority": 1,
+                "title": "No tactical pit delta edge",
+                "action": "Hold primary pit plan and continue monitoring pit-loss opportunities.",
+                "rationale": f"Current gap/pace profile at {track_name} does not strongly favor undercut or overcut.",
+                "confidence": 0.66,
+                "risk_tags": [],
+            },
+        )
+
+    return _strategy_wall_node
+
+
 def make_racecraft_node():
     async def _racecraft_node(state: StrategyState) -> StrategyState:
         snapshot = state.get("snapshot", {})
         race = snapshot.get("race", {})
         pace = snapshot.get("pace", {})
         energy = snapshot.get("energy", {})
+        conditions = snapshot.get("conditions", {})
+        signals = snapshot.get("signals", {})
 
         gap_front_ms = int(race.get("gap_front_ms", 99999))
         pace_delta_ms = pace.get("pace_delta_ms")
         ers_pct = float(energy.get("ers_pct", 0.0))
         fuel_laps = float(energy.get("fuel_laps_remaining", 0.0))
         laps_remaining = int(race.get("laps_remaining", 0))
+        safety_car_status = int(conditions.get("safety_car_status", 0))
+        safety_car_recent = bool(signals.get("safety_car_recent", False))
+        track_id = int(conditions.get("track_id", -1))
+        track_profile = get_track_strategy_profile(track_id)
+        track_name = str(track_profile["name"])
+        overtake_difficulty = float(track_profile["overtake_difficulty"])
+
+        if overtake_difficulty >= 0.8:
+            attack_gap_ms = int(AGGRESSIVE_OVERTAKE_GAP_MS * 0.7)
+        elif overtake_difficulty <= 0.4:
+            attack_gap_ms = int(AGGRESSIVE_OVERTAKE_GAP_MS * 1.3)
+        else:
+            attack_gap_ms = AGGRESSIVE_OVERTAKE_GAP_MS
+
+        if safety_car_status > 0 or safety_car_recent:
+            return _append_call(
+                state,
+                {
+                    "desk": "racecraft",
+                    "priority": 2,
+                    "title": "Overtake calls paused",
+                    "action": "Do not force overtakes under SC/VSC conditions; focus on restart prep.",
+                    "rationale": f"Neutralized race conditions at {track_name} invalidate attack windows.",
+                    "confidence": 0.84,
+                    "risk_tags": ["neutralized_race"],
+                },
+            )
 
         if (
-            0 < gap_front_ms <= AGGRESSIVE_OVERTAKE_GAP_MS
+            overtake_difficulty >= 0.82
+            and 0 < gap_front_ms <= OVERTAKE_GAP_MS
+            and ers_pct >= 25
+            and fuel_laps >= laps_remaining
+        ):
+            return _append_call(
+                state,
+                {
+                    "desk": "racecraft",
+                    "priority": 3,
+                    "title": "Pressure phase on high-difficulty track",
+                    "action": "Stay in DRS range and force pit-stop pressure instead of low-probability dive attempts.",
+                    "rationale": f"{track_name} typically rewards track-position tactics over on-track lunges.",
+                    "confidence": 0.76,
+                    "risk_tags": ["track_position_priority"],
+                },
+            )
+
+        if (
+            0 < gap_front_ms <= attack_gap_ms
             and ers_pct >= 25
             and fuel_laps >= laps_remaining
         ):
@@ -406,7 +729,7 @@ def make_racecraft_node():
                     "priority": 3,
                     "title": "Overtake opportunity",
                     "action": "Use DRS/ERS combo to attempt pass on next straight.",
-                    "rationale": f"Front gap {gap_front_ms/1000:.3f}s with usable ERS.",
+                    "rationale": f"Front gap {gap_front_ms/1000:.3f}s at {track_name} with usable ERS.",
                     "confidence": 0.78,
                     "risk_tags": ["overtake_window"],
                 },
