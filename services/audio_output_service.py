@@ -3,6 +3,8 @@ import logging
 import os
 import re
 import tempfile
+import threading
+import time
 import wave
 from typing import Any
 
@@ -101,6 +103,7 @@ class AudioOutputService:
 
         self._kokoro_tts: Any = None
         self._available = False
+        self._interrupt_event = threading.Event()
         self._setup_backend()
 
     @property
@@ -206,6 +209,7 @@ class AudioOutputService:
         style_hint: str | None = None,
         priority: int | None = None,
     ) -> None:
+        self._interrupt_event.clear()
         prepared = _prepare_tts_text(message, self._tts_max_chars)
         if not prepared:
             return
@@ -224,10 +228,16 @@ class AudioOutputService:
             return
 
         if self._simulate_delay:
-            await asyncio.sleep(min(len(expressive_text) * 0.02, 2.0))
+            remaining = min(len(expressive_text) * 0.02, 2.0)
+            while remaining > 0 and not self._interrupt_event.is_set():
+                sleep_chunk = min(0.05, remaining)
+                await asyncio.sleep(sleep_chunk)
+                remaining -= sleep_chunk
 
     def _speak_with_kokoro_sync(self, message: str, voice: str, speed: float) -> None:
         if self._kokoro_tts is None:
+            return
+        if self._interrupt_event.is_set():
             return
 
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as wav_file:
@@ -255,10 +265,20 @@ class AudioOutputService:
                 wav_writer.setframerate(int(sample_rate))
                 wav_writer.writeframes(audio_pcm.tobytes())
 
+            duration_sec = max(0.05, float(sample_array.size) / float(sample_rate))
             try:
                 import winsound
 
-                winsound.PlaySound(wav_path, winsound.SND_FILENAME)
+                winsound.PlaySound(
+                    wav_path,
+                    winsound.SND_FILENAME | winsound.SND_ASYNC,
+                )
+                playback_deadline = time.monotonic() + duration_sec + 0.05
+                while time.monotonic() < playback_deadline:
+                    if self._interrupt_event.is_set():
+                        break
+                    time.sleep(0.02)
+                self._stop_playback_sync()
             except Exception as exc:
                 logger.warning("kokoro produced audio but playback failed: %s", exc)
         except Exception as exc:
@@ -269,5 +289,26 @@ class AudioOutputService:
             except OSError:
                 pass
 
+    def _stop_playback_sync(self) -> None:
+        try:
+            import winsound
+
+            try:
+                winsound.PlaySound(None, winsound.SND_PURGE)
+            except Exception:
+                pass
+            try:
+                winsound.PlaySound(None, 0)
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    def interrupt_playback(self) -> bool:
+        self._interrupt_event.set()
+        self._stop_playback_sync()
+        return True
+
     def stop(self) -> None:
+        self.interrupt_playback()
         self._kokoro_tts = None

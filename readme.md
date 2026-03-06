@@ -129,5 +129,6 @@ Temperatures can still be set globally (`LLM_TEMPERATURE`) or per role (`STRATEG
   - for toggle mode startup state: `VOICE_STT_TOGGLE_DEFAULT_ON=false`.
   - optional VAD filter remains configurable (`VOICE_STT_WHISPER_VAD_FILTER=false` recommended for race-radio realism).
   - dashboard includes mic controls: Toggle Mic, Hold-To-Talk, mode selector, and Space-key PTT binding.
+  - driver barge-in is enabled: if you speak while TTS is talking, current engineer audio is interrupted and your query is prioritized.
 - Voice queue summarization now uses structured LLM output instead of manual JSON parsing.
 

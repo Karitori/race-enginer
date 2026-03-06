@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 from services.audio_input_service import AudioInputService
@@ -134,3 +136,17 @@ def test_apply_expressive_format_adds_urgency(monkeypatch):
     service = AudioOutputService()
     formatted = service._apply_expressive_format("Box this lap", "warning", 4)
     assert formatted.endswith("!")
+
+
+@pytest.mark.asyncio
+async def test_audio_output_simulated_speech_interrupt(monkeypatch):
+    monkeypatch.setenv("VOICE_ENABLE_TTS", "false")
+    monkeypatch.setenv("VOICE_SIMULATE_DELAY", "true")
+    service = AudioOutputService()
+
+    speaking_task = asyncio.create_task(service.speak("Push now " * 200))
+    await asyncio.sleep(0.05)
+    interrupted = service.interrupt_playback()
+    await asyncio.wait_for(speaking_task, timeout=0.5)
+
+    assert interrupted is True

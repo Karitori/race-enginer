@@ -105,10 +105,40 @@ class VoiceAssistant:
     async def _stt_loop(self) -> None:
         await self.audio_input.run(self._on_driver_transcript)
 
+    def _prune_noncritical_queue_for_barge_in(self) -> int:
+        retained: list[tuple[int, int, DrivingInsight]] = []
+        dropped = 0
+        while True:
+            try:
+                item = self._priority_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            _, _, insight = item
+            if insight.priority >= 4 or insight.type == "warning":
+                retained.append(item)
+            else:
+                dropped += 1
+
+        for item in retained:
+            self._priority_queue.put_nowait(item)
+        return dropped
+
+    def _barge_in_if_driver_speaks(self) -> None:
+        if not self._is_speaking:
+            return
+        interrupted = self.audio_output.interrupt_playback()
+        dropped = self._prune_noncritical_queue_for_barge_in()
+        logger.info(
+            "VOICE ENGINE: Driver barge-in detected, interrupted=%s, dropped_noncritical=%d",
+            interrupted,
+            dropped,
+        )
+
     async def _on_driver_transcript(self, text: str, confidence: float) -> None:
         cleaned = text.strip()
         if not cleaned:
             return
+        self._barge_in_if_driver_speaks()
         logger.info("VOICE INPUT: '%s' (conf %.2f)", cleaned, confidence)
         await bus.publish("driver_query", DriverQuery(query=cleaned, confidence=confidence))
 
