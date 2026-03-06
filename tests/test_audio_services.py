@@ -1,7 +1,7 @@
 import pytest
 
 from services.audio_input_service import AudioInputService
-from services.audio_output_service import AudioOutputService, _prepare_tts_text
+from services.audio_output_service import AudioOutputService, _parse_style_hint, _prepare_tts_text
 
 
 def test_audio_input_disabled_by_default(monkeypatch):
@@ -86,3 +86,22 @@ def test_prepare_tts_text_limits_length():
     raw = "A " * 300
     prepared = _prepare_tts_text(raw, max_chars=100)
     assert len(prepared) <= 101
+
+
+def test_parse_style_hint_defaults_for_unknown():
+    assert _parse_style_hint("something", fallback="info") == "info"
+    assert _parse_style_hint("warning", fallback="info") == "warning"
+
+
+def test_kokoro_profile_uses_warning_speed_for_critical(monkeypatch):
+    monkeypatch.setenv("VOICE_ENABLE_TTS", "false")
+    service = AudioOutputService()
+    _voice, speed = service._resolve_kokoro_profile(style_hint="info", priority=5)
+    assert speed == service._kokoro_speed_warning
+
+
+def test_apply_expressive_format_adds_urgency(monkeypatch):
+    monkeypatch.setenv("VOICE_ENABLE_TTS", "false")
+    service = AudioOutputService()
+    formatted = service._apply_expressive_format("Box this lap", "warning", 4)
+    assert formatted.endswith("!")

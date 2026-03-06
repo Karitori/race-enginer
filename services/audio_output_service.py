@@ -53,6 +53,15 @@ def _prepare_tts_text(text: str, max_chars: int) -> str:
     return clipped
 
 
+def _parse_style_hint(raw: str | None, fallback: str) -> str:
+    if raw is None:
+        return fallback
+    cleaned = raw.strip().lower()
+    if cleaned in {"warning", "strategy", "encouragement", "info"}:
+        return cleaned
+    return fallback
+
+
 class AudioOutputService:
     """Audio output wrapper locked to local Kokoro backend."""
 
@@ -64,10 +73,30 @@ class AudioOutputService:
         self._kokoro_model_path = (os.getenv("VOICE_KOKORO_MODEL_PATH", "") or "").strip()
         self._kokoro_voices_path = (os.getenv("VOICE_KOKORO_VOICES_PATH", "") or "").strip()
         self._kokoro_voice = (os.getenv("VOICE_KOKORO_VOICE", "af_sarah") or "af_sarah").strip()
+        self._kokoro_voice_warning = (
+            os.getenv("VOICE_KOKORO_VOICE_WARNING", self._kokoro_voice) or self._kokoro_voice
+        ).strip()
+        self._kokoro_voice_strategy = (
+            os.getenv("VOICE_KOKORO_VOICE_STRATEGY", self._kokoro_voice) or self._kokoro_voice
+        ).strip()
+        self._kokoro_voice_encouragement = (
+            os.getenv("VOICE_KOKORO_VOICE_ENCOURAGEMENT", self._kokoro_voice)
+            or self._kokoro_voice
+        ).strip()
         self._kokoro_lang = (os.getenv("VOICE_KOKORO_LANG", "en-us") or "en-us").strip()
         self._kokoro_speed = _clamp_float(
             _parse_float(os.getenv("VOICE_KOKORO_SPEED"), 1.15), 0.5, 2.0
         )
+        self._kokoro_speed_warning = _clamp_float(
+            _parse_float(os.getenv("VOICE_KOKORO_SPEED_WARNING"), 1.25), 0.5, 2.0
+        )
+        self._kokoro_speed_strategy = _clamp_float(
+            _parse_float(os.getenv("VOICE_KOKORO_SPEED_STRATEGY"), 1.12), 0.5, 2.0
+        )
+        self._kokoro_speed_encouragement = _clamp_float(
+            _parse_float(os.getenv("VOICE_KOKORO_SPEED_ENCOURAGEMENT"), 1.20), 0.5, 2.0
+        )
+        self._kokoro_expressive = _parse_bool(os.getenv("VOICE_KOKORO_EXPRESSIVE"), True)
         self._tts_max_chars = max(80, int(_parse_float(os.getenv("VOICE_TTS_MAX_CHARS"), 220)))
 
         self._kokoro_tts: Any = None
@@ -124,29 +153,80 @@ class AudioOutputService:
             )
             self._available = True
             logger.info(
-                "kokoro backend enabled (voice=%s, lang=%s, speed=%.2f)",
+                "kokoro backend enabled (voice=%s, lang=%s, speed=%.2f, expressive=%s)",
                 self._kokoro_voice,
                 self._kokoro_lang,
                 self._kokoro_speed,
+                self._kokoro_expressive,
             )
         except Exception as exc:
             logger.warning("kokoro initialization failed: %s", exc)
             self._available = False
 
-    async def speak(self, message: str) -> None:
+    def _resolve_kokoro_profile(
+        self,
+        *,
+        style_hint: str | None,
+        priority: int | None,
+    ) -> tuple[str, float]:
+        style = _parse_style_hint(style_hint, fallback="info")
+        if priority is not None and priority >= 5:
+            style = "warning"
+
+        if style == "warning":
+            return self._kokoro_voice_warning, self._kokoro_speed_warning
+        if style == "strategy":
+            return self._kokoro_voice_strategy, self._kokoro_speed_strategy
+        if style == "encouragement":
+            return self._kokoro_voice_encouragement, self._kokoro_speed_encouragement
+        return self._kokoro_voice, self._kokoro_speed
+
+    def _apply_expressive_format(self, text: str, style_hint: str | None, priority: int | None) -> str:
+        if not self._kokoro_expressive:
+            return text
+
+        style = _parse_style_hint(style_hint, fallback="info")
+        if priority is not None and priority >= 5:
+            style = "warning"
+
+        if style == "warning":
+            if not text.endswith("!"):
+                return f"{text}!"
+            return text
+        if style == "encouragement":
+            return f"Great job. {text}" if not text.lower().startswith("great job") else text
+        if style == "strategy":
+            return text.replace(" now", " now, copy")
+        return text
+
+    async def speak(
+        self,
+        message: str,
+        *,
+        style_hint: str | None = None,
+        priority: int | None = None,
+    ) -> None:
         prepared = _prepare_tts_text(message, self._tts_max_chars)
         if not prepared:
             return
+        expressive_text = self._apply_expressive_format(prepared, style_hint, priority)
+        voice, speed = self._resolve_kokoro_profile(style_hint=style_hint, priority=priority)
 
         if self._available and self.backend == "kokoro":
             loop = asyncio.get_running_loop()
-            await loop.run_in_executor(None, self._speak_with_kokoro_sync, prepared)
+            await loop.run_in_executor(
+                None,
+                self._speak_with_kokoro_sync,
+                expressive_text,
+                voice,
+                speed,
+            )
             return
 
         if self._simulate_delay:
-            await asyncio.sleep(min(len(prepared) * 0.02, 2.0))
+            await asyncio.sleep(min(len(expressive_text) * 0.02, 2.0))
 
-    def _speak_with_kokoro_sync(self, message: str) -> None:
+    def _speak_with_kokoro_sync(self, message: str, voice: str, speed: float) -> None:
         if self._kokoro_tts is None:
             return
 
@@ -158,8 +238,8 @@ class AudioOutputService:
 
             samples, sample_rate = self._kokoro_tts.create(
                 message,
-                voice=self._kokoro_voice,
-                speed=self._kokoro_speed,
+                voice=voice,
+                speed=speed,
                 lang=self._kokoro_lang,
             )
             sample_array = np.asarray(samples, dtype=np.float32).flatten()

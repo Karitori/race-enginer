@@ -101,13 +101,27 @@ class VoiceAssistant:
             async with self._speak_lock:
                 self._is_speaking = True
                 try:
-                    await self._speak(insight.message)
+                    await self._speak(
+                        insight.message,
+                        insight_type=insight.type,
+                        priority=insight.priority,
+                    )
                 finally:
                     self._is_speaking = False
 
-    async def _speak(self, message: str):
+    async def _speak(
+        self,
+        message: str,
+        *,
+        insight_type: str = "info",
+        priority: int = 3,
+    ):
         try:
-            await self.audio_output.speak(message)
+            await self.audio_output.speak(
+                message,
+                style_hint=insight_type,
+                priority=priority,
+            )
         except Exception as exc:
             logger.error("tts speak error: %s", exc)
 
@@ -204,4 +218,3 @@ Queued Messages:
         self.audio_output.stop()
         for task in self._tasks:
             task.cancel()
-
