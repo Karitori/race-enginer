@@ -8,7 +8,7 @@ load_dotenv()
 
 from services.feedback_service import PerformanceAnalyzer
 from services.telemetry_state_service import SessionState
-from services.app_service import app, set_datastore, set_parser_manager
+from services.app_service import app, set_datastore, set_parser_manager, set_voice_assistant
 from services.voice_service import VoiceAssistant
 from services.telemetry_mode_service import TelemetryModeService
 from services.http_server_service import start_http_server
@@ -31,6 +31,7 @@ async def main():
     set_parser_manager(parser_manager)
     feedback_analyzer = PerformanceAnalyzer()
     voice_assistant = VoiceAssistant()
+    set_voice_assistant(voice_assistant)
     race_engineer = RaceEngineerService()
     strategy_agent = StrategyAgent(repository=repository, poll_interval=15)
 

@@ -3,6 +3,7 @@ import logging
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from routes.route_context import get_voice_assistant
 from services.event_bus_service import bus
 
 router = APIRouter()
@@ -141,6 +142,9 @@ async def websocket_endpoint(websocket: WebSocket):
     async def telemetry_status_handler(data):
         await queue.put({"topic": "telemetry_status", "payload": data})
 
+    async def stt_status_handler(data):
+        await queue.put({"topic": "stt_status", "payload": data})
+
     bus.subscribe("telemetry_tick", telemetry_handler)
     bus.subscribe("driving_insight", insight_handler)
     bus.subscribe("packet_car_telemetry", car_telemetry_handler)
@@ -150,6 +154,16 @@ async def websocket_endpoint(websocket: WebSocket):
     bus.subscribe("packet_lap_data", lap_data_handler)
     bus.subscribe("packet_event", event_handler)
     bus.subscribe("telemetry_status", telemetry_status_handler)
+    bus.subscribe("stt_status", stt_status_handler)
+
+    voice_assistant = get_voice_assistant()
+    if voice_assistant is not None:
+        await queue.put(
+            {
+                "topic": "stt_status",
+                "payload": voice_assistant.get_stt_status(),
+            }
+        )
 
     try:
         while True:
@@ -169,3 +183,4 @@ async def websocket_endpoint(websocket: WebSocket):
         bus.unsubscribe("packet_lap_data", lap_data_handler)
         bus.unsubscribe("packet_event", event_handler)
         bus.unsubscribe("telemetry_status", telemetry_status_handler)
+        bus.unsubscribe("stt_status", stt_status_handler)

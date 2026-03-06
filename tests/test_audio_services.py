@@ -33,6 +33,35 @@ def test_audio_input_unsupported_backend_is_disabled(monkeypatch):
     assert not service.available
 
 
+def test_audio_input_control_toggle_default_off(monkeypatch):
+    monkeypatch.setenv("VOICE_STT_BACKEND", "whisper")
+    monkeypatch.setenv("VOICE_STT_CONTROL_MODE", "toggle")
+    monkeypatch.setenv("VOICE_STT_TOGGLE_DEFAULT_ON", "false")
+    service = AudioInputService()
+    status = service.get_control_status()
+    assert status["control_mode"] == "toggle"
+    assert status["capture_gate_open"] is False
+
+
+def test_audio_input_control_toggle_action(monkeypatch):
+    monkeypatch.setenv("VOICE_STT_BACKEND", "whisper")
+    monkeypatch.setenv("VOICE_STT_CONTROL_MODE", "toggle")
+    monkeypatch.setenv("VOICE_STT_TOGGLE_DEFAULT_ON", "false")
+    service = AudioInputService()
+    status = service.apply_control_action(action="toggle")
+    assert status["capture_gate_open"] is True
+
+
+def test_audio_input_control_ptt_actions(monkeypatch):
+    monkeypatch.setenv("VOICE_STT_BACKEND", "whisper")
+    monkeypatch.setenv("VOICE_STT_CONTROL_MODE", "ptt")
+    service = AudioInputService()
+    status_down = service.apply_control_action(action="ptt_down")
+    assert status_down["capture_gate_open"] is True
+    status_up = service.apply_control_action(action="ptt_up")
+    assert status_up["capture_gate_open"] is False
+
+
 def test_audio_output_can_be_disabled(monkeypatch):
     monkeypatch.setenv("VOICE_ENABLE_TTS", "false")
     service = AudioOutputService()

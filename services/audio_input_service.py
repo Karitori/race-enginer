@@ -60,6 +60,9 @@ class AudioInputService:
     def __init__(self):
         self.enabled = _parse_bool(os.getenv("VOICE_ENABLE_STT"), False)
         self.backend = (os.getenv("VOICE_STT_BACKEND", "whisper") or "").strip().lower()
+        self.control_mode = (
+            os.getenv("VOICE_STT_CONTROL_MODE", "toggle") or "toggle"
+        ).strip().lower()
         self.language = os.getenv("VOICE_STT_LANGUAGE", "en")
         self.timeout_sec = _parse_float(os.getenv("VOICE_STT_TIMEOUT_SEC"), 4.0)
         self.phrase_limit_sec = _parse_float(os.getenv("VOICE_STT_PHRASE_LIMIT_SEC"), 6.0)
@@ -78,7 +81,7 @@ class AudioInputService:
             or "int8"
         ).strip()
         self.whisper_beam_size = max(1, _parse_int(os.getenv("VOICE_STT_WHISPER_BEAM_SIZE"), 1))
-        self.whisper_vad_filter = _parse_bool(os.getenv("VOICE_STT_WHISPER_VAD_FILTER"), True)
+        self.whisper_vad_filter = _parse_bool(os.getenv("VOICE_STT_WHISPER_VAD_FILTER"), False)
 
         self._running = False
         self._available = False
@@ -88,6 +91,8 @@ class AudioInputService:
         self._whisper_model: Any = None
         self._whisper_model_ref: str = "turbo"
         self._ambient_calibrated = False
+        self._toggle_active = _parse_bool(os.getenv("VOICE_STT_TOGGLE_DEFAULT_ON"), False)
+        self._ptt_pressed = False
         self._setup_backend()
 
     @property
@@ -95,6 +100,7 @@ class AudioInputService:
         return self._available and self.enabled
 
     def _setup_backend(self) -> None:
+        self.control_mode = self._normalize_control_mode(self.control_mode)
         if not self.enabled:
             logger.info("audio input disabled (VOICE_ENABLE_STT=false)")
             return
@@ -107,6 +113,57 @@ class AudioInputService:
             "unsupported VOICE_STT_BACKEND=%s; only 'whisper' is allowed, STT disabled",
             self.backend,
         )
+
+    @staticmethod
+    def _normalize_control_mode(raw: str | None) -> str:
+        mode = (raw or "").strip().lower()
+        if mode in {"toggle", "ptt", "always"}:
+            return mode
+        return "toggle"
+
+    def _is_capture_gate_open(self) -> bool:
+        if self.control_mode == "always":
+            return True
+        if self.control_mode == "ptt":
+            return self._ptt_pressed
+        return self._toggle_active
+
+    def get_control_status(self) -> dict[str, Any]:
+        gate_open = self._is_capture_gate_open()
+        return {
+            "enabled": self.enabled,
+            "available": self._available,
+            "backend": self.backend,
+            "control_mode": self.control_mode,
+            "toggle_active": self._toggle_active,
+            "ptt_pressed": self._ptt_pressed,
+            "capture_gate_open": gate_open,
+            "capture_active": gate_open and self.available,
+        }
+
+    def apply_control_action(
+        self,
+        *,
+        action: str,
+        enabled: bool | None = None,
+        mode: str | None = None,
+    ) -> dict[str, Any]:
+        normalized_action = (action or "").strip().lower()
+        if normalized_action == "toggle":
+            self._toggle_active = not self._toggle_active
+        elif normalized_action == "set":
+            if enabled is not None:
+                self._toggle_active = bool(enabled)
+        elif normalized_action == "ptt_down":
+            self._ptt_pressed = True
+        elif normalized_action == "ptt_up":
+            self._ptt_pressed = False
+        elif normalized_action == "mode":
+            self.control_mode = self._normalize_control_mode(mode)
+        elif normalized_action == "reset":
+            self._toggle_active = _parse_bool(os.getenv("VOICE_STT_TOGGLE_DEFAULT_ON"), False)
+            self._ptt_pressed = False
+        return self.get_control_status()
 
     def _setup_whisper(self) -> None:
         model_value = self.whisper_model
@@ -166,6 +223,9 @@ class AudioInputService:
         self._running = True
         loop = asyncio.get_running_loop()
         while self._running:
+            if not self._is_capture_gate_open():
+                await asyncio.sleep(0.04)
+                continue
             result = await loop.run_in_executor(None, self._listen_once)
             if result is None:
                 continue

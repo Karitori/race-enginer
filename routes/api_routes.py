@@ -1,8 +1,8 @@
 from fastapi import APIRouter
 
-from models.api import DriverQueryPayload, SQLQueryPayload, TelemetryModePayload
+from models.api import DriverQueryPayload, SQLQueryPayload, STTControlPayload, TelemetryModePayload
 from models.telemetry import DriverQuery, TalkLevelPayload
-from routes.route_context import get_datastore, get_parser_manager
+from routes.route_context import get_datastore, get_parser_manager, get_voice_assistant
 from services.event_bus_service import bus
 
 router = APIRouter()
@@ -56,3 +56,27 @@ async def execute_sql_query(payload: SQLQueryPayload):
         return {"status": "success", "rows": rows}
     except Exception as e:
         return {"status": "error", "error": str(e)}
+
+
+@router.get("/api/stt_status")
+async def get_stt_status():
+    """Get current STT capture control status (toggle/PTT state)."""
+    voice_assistant = get_voice_assistant()
+    if voice_assistant is None:
+        return {"status": "error", "error": "Voice assistant not initialized"}
+    status = voice_assistant.get_stt_status()
+    return {"status": "success", **status}
+
+
+@router.post("/api/stt_control")
+async def set_stt_control(payload: STTControlPayload):
+    """Control STT gating (toggle, set, ptt_down, ptt_up, mode, reset)."""
+    voice_assistant = get_voice_assistant()
+    if voice_assistant is None:
+        return {"status": "error", "error": "Voice assistant not initialized"}
+    status = await voice_assistant.apply_stt_control(
+        action=payload.action,
+        enabled=payload.enabled,
+        mode=payload.mode,
+    )
+    return {"status": "success", **status}

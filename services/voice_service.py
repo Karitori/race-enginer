@@ -53,8 +53,27 @@ class VoiceAssistant:
             self._tasks.append(loop.create_task(self._batch_summarize_loop()))
             if self.audio_input.available:
                 self._tasks.append(loop.create_task(self._stt_loop()))
+            self._tasks.append(loop.create_task(bus.publish("stt_status", self.get_stt_status())))
         except RuntimeError:
             pass
+
+    def get_stt_status(self) -> dict[str, Any]:
+        return self.audio_input.get_control_status()
+
+    async def apply_stt_control(
+        self,
+        *,
+        action: str,
+        enabled: bool | None = None,
+        mode: str | None = None,
+    ) -> dict[str, Any]:
+        status = self.audio_input.apply_control_action(
+            action=action,
+            enabled=enabled,
+            mode=mode,
+        )
+        await bus.publish("stt_status", status)
+        return status
 
     async def _update_talk_level(self, data: dict[str, Any]):
         self.talk_level = int(data.get("talk_level", 5))

@@ -356,6 +356,29 @@
                 </div>
                 <input type="text" id="query-input" placeholder="Driver radio message...">
                 <button onclick="sendQuery()">Simulate Driver Radio</button>
+
+                <div style="margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border);">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                        <label style="font-size: 12px; font-weight: bold;">Mic Control</label>
+                        <span class="indicator ind-red" id="stt-status-badge">MIC OFF</span>
+                    </div>
+                    <div style="display:flex; gap:6px; margin-bottom:6px;">
+                        <button id="mic-toggle-btn" style="flex:1; margin:0; width:auto;" onclick="toggleMic()">Toggle Mic</button>
+                        <button id="ptt-btn" style="flex:1; margin:0; width:auto;"
+                            onmousedown="pttDown()" onmouseup="pttUp()" onmouseleave="pttUp()"
+                            ontouchstart="pttDown()" ontouchend="pttUp()">Hold To Talk</button>
+                    </div>
+                    <div style="display:flex; align-items:center; gap:6px;">
+                        <span style="font-size:11px; color:#8b949e;">Mode</span>
+                        <select id="stt-mode" onchange="setSttMode()"
+                            style="background:#000; color:#fff; border:1px solid #30363d; border-radius:4px; padding:3px 6px; font-size:11px;">
+                            <option value="toggle">Toggle</option>
+                            <option value="ptt">Push-To-Talk</option>
+                            <option value="always">Always On</option>
+                        </select>
+                        <span style="font-size:10px; color:#555;">PTT key: Space</span>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -423,6 +446,73 @@
         var scNames = {0:"",1:"SAFETY CAR",2:"VIRTUAL SC",3:"FORMATION LAP"};
 
         var bestLapTime = 0;
+        var sttState = {control_mode: "toggle", capture_gate_open: false, capture_active: false};
+
+        function updateSttUi(payload) {
+            if (!payload) return;
+            sttState = payload;
+            var badge = document.getElementById('stt-status-badge');
+            var modeSelect = document.getElementById('stt-mode');
+            var toggleBtn = document.getElementById('mic-toggle-btn');
+            var pttBtn = document.getElementById('ptt-btn');
+
+            if (modeSelect && payload.control_mode) {
+                modeSelect.value = payload.control_mode;
+            }
+            var micOn = !!payload.capture_gate_open;
+            badge.innerText = micOn ? "MIC ON" : "MIC OFF";
+            badge.className = "indicator " + (micOn ? "ind-green" : "ind-red");
+
+            var mode = payload.control_mode || "toggle";
+            toggleBtn.disabled = mode === "always";
+            pttBtn.disabled = mode !== "ptt";
+            if (mode === "ptt") {
+                pttBtn.innerText = payload.ptt_pressed ? "Listening..." : "Hold To Talk";
+            } else {
+                pttBtn.innerText = "Hold To Talk";
+            }
+        }
+
+        function postSttControl(body) {
+            return fetch('/api/stt_control', {
+                method: 'POST',
+                headers: {'Content-Type':'application/json'},
+                body: JSON.stringify(body)
+            }).then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (data.status === 'success') updateSttUi(data);
+                return data;
+            });
+        }
+
+        function fetchSttStatus() {
+            fetch('/api/stt_status')
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    if (data.status === 'success') updateSttUi(data);
+                });
+        }
+
+        function toggleMic() {
+            postSttControl({action: 'toggle'});
+        }
+
+        function setSttMode() {
+            var mode = document.getElementById('stt-mode').value;
+            postSttControl({action: 'mode', mode: mode});
+        }
+
+        function pttDown() {
+            if ((sttState.control_mode || 'toggle') !== 'ptt') return;
+            if (sttState.ptt_pressed) return;
+            postSttControl({action: 'ptt_down'});
+        }
+
+        function pttUp() {
+            if ((sttState.control_mode || 'toggle') !== 'ptt') return;
+            if (!sttState.ptt_pressed) return;
+            postSttControl({action: 'ptt_up'});
+        }
 
         function sendQuery() {
             var inp = document.getElementById("query-input");
@@ -491,6 +581,20 @@
         // Fetch initial status on load
         fetch('/api/telemetry_status').then(function(r) { return r.json(); })
         .then(function(d) { updateConnUI(d.mode, d.status, d.host, d.port); });
+        fetchSttStatus();
+
+        document.addEventListener('keydown', function(e) {
+            if (e.code !== 'Space' || e.repeat) return;
+            if (document.activeElement && document.activeElement.id === 'query-input') return;
+            e.preventDefault();
+            pttDown();
+        });
+        document.addEventListener('keyup', function(e) {
+            if (e.code !== 'Space') return;
+            if (document.activeElement && document.activeElement.id === 'query-input') return;
+            e.preventDefault();
+            pttUp();
+        });
 
         var ws = new WebSocket('ws://' + location.host + '/ws');
 
@@ -627,6 +731,8 @@
                 } else if (d.status === 'error') {
                     addLog('insights', '[SYSTEM] UDP error: ' + (d.error || 'unknown'), 'warn-log');
                 }
+            } else if (msg.topic === "stt_status") {
+                updateSttUi(msg.payload);
             }
         };
 
