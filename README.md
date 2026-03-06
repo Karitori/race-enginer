@@ -60,5 +60,9 @@ uv run python main.py
 
 - `requirements.txt` is removed.
 - Phase 2 LangGraph strategy execution now runs in-process via `agents/strategy_agent.py`.
-- Real UDP telemetry still requires the external F1 parser definitions repo to be present locally.
+- Default telemetry mode is now `real` (UDP listener on `0.0.0.0:20777`).
+- Real UDP telemetry requires F1 25 ctypes definitions (`parser2025.py`):
+  - Preferred: set `F1_25_PARSER_PATH` in `.env` to the absolute parser file path.
+  - Alternative: keep `f1-25-telemetry-application` adjacent to this repo.
+- Set `TELEMETRY_FALLBACK_TO_MOCK=true` only if you want automatic fallback when real parser boot fails.
 

@@ -158,7 +158,7 @@
         <div class="header-controls">
             <div class="conn-status">
                 <span class="conn-dot" id="conn-dot" style="background: #2ea043;"></span>
-                <span class="conn-text" id="conn-text">Mock Running</span>
+                <span class="conn-text" id="conn-text">Initializing telemetry...</span>
             </div>
             <div class="mode-toggle">
                 <span class="mode-label">Mock</span>
@@ -473,7 +473,7 @@
                 if (status === 'connected') {
                     dot.style.background = '#2ea043';
                     text.innerText = 'Connected';
-                } else if (status === 'listening') {
+                } else if (status === 'listening' || status === 'starting') {
                     dot.style.background = '#d29922';
                     text.innerText = 'Waiting for game...';
                 } else if (status === 'error') {

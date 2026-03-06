@@ -17,6 +17,7 @@ The Race Engineer system is an intelligent assistant designed to act as an autom
 - **Responsibility:** Ingest raw telemetry data from the racing simulator (via UDP stream similar to `Fredrik2002/f1-25-telemetry-application`), decode packets, and publish normalized data.
 - **Outputs:** Normalized `TelemetryTick` events.
 - **Supporting modules:** `services/telemetry_ctypes_service.py` (ctypes loader), `services/telemetry_packet_conversion_service.py` (model converters), `services/telemetry_packet_registry.py` (packet topic mapping).
+- **Runtime default:** `TelemetryModeService` now boots in `real` mode by default and uses mock only when explicitly selected (or optional fallback is enabled).
 
 ### 2. Historical Data Store (`db/telemetry_store.py` via DuckDB)
 - **Responsibility:** Subscribes to telemetry events and stores them in a fast, in-process analytical database (DuckDB) for time-series and aggregate analysis.

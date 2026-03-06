@@ -28,7 +28,7 @@ async def get_telemetry_status():
     """Get current telemetry mode and connection status."""
     parser_manager = get_parser_manager()
     if parser_manager is None:
-        return {"mode": "mock", "status": "not_started"}
+        return {"mode": "real", "status": "not_started"}
     return parser_manager.get_status()
 
 

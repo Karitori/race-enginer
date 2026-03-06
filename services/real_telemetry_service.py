@@ -11,7 +11,10 @@ import time
 from typing import Optional
 
 from services.event_bus_service import bus
-from services.telemetry_ctypes_service import ctypes_parser_module as _ct
+from services.telemetry_ctypes_service import (
+    ctypes_parser_module as _ct,
+    expected_ctypes_parser_paths,
+)
 from services.telemetry_packet_registry import PACKET_TOPICS
 from services.telemetry_packet_conversion_service import PACKET_CONVERTERS
 
@@ -41,9 +44,10 @@ class RealTelemetryParser:
 
     async def start(self):
         if _ct is None:
+            checked_paths = expected_ctypes_parser_paths()
             logger.error(
                 "Cannot start real parser: ctypes packet definitions not found. "
-                "Ensure f1-25-telemetry-application/ is present in the project root."
+                "Set F1_25_PARSER_PATH or place f1-25-telemetry-application in a supported path."
             )
             await bus.publish(
                 "telemetry_status",
@@ -51,6 +55,7 @@ class RealTelemetryParser:
                     "mode": "real",
                     "status": "error",
                     "error": "Missing F1 25 parser definitions",
+                    "checked_paths": checked_paths,
                     "host": self.host,
                     "port": self.port,
                 },
