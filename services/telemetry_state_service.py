@@ -30,6 +30,15 @@ from services.event_bus_service import bus
 logger = logging.getLogger(__name__)
 
 
+def _session_signature(data: PacketSessionData) -> tuple[int, int, int, int]:
+    return (
+        int(data.header.session_uid),
+        int(data.session_type),
+        int(data.track_id),
+        int(data.total_laps),
+    )
+
+
 class SessionState:
     """Holds the latest data from every packet type as a single source of truth."""
 
@@ -51,6 +60,7 @@ class SessionState:
         self.time_trial: Optional[PacketTimeTrialData] = None
         self.lap_positions: Optional[PacketLapPositions] = None
         self.events_log: List[PacketEventData] = []
+        self._active_signature: tuple[int, int, int, int] | None = None
 
         # Subscribe to all packet bus topics
         bus.subscribe("packet_motion", self._on_motion)
@@ -78,7 +88,48 @@ class SessionState:
         self.motion = data
 
     async def _on_session(self, data: PacketSessionData):
+        new_signature = _session_signature(data)
+        if self._active_signature is None:
+            self._active_signature = new_signature
+        elif new_signature != self._active_signature:
+            previous_signature = self._active_signature
+            self._reset_for_new_session()
+            self._active_signature = new_signature
+            logger.info(
+                "SessionState: session changed %s -> %s; cleared transient caches.",
+                previous_signature,
+                new_signature,
+            )
+            await bus.publish(
+                "race_session_changed",
+                {
+                    "previous_signature": previous_signature,
+                    "new_signature": new_signature,
+                    "session_uid": new_signature[0],
+                    "session_type": new_signature[1],
+                    "track_id": new_signature[2],
+                    "total_laps": new_signature[3],
+                },
+            )
         self.session = data
+
+    def _reset_for_new_session(self) -> None:
+        self.motion = None
+        self.lap_data = None
+        self.event = None
+        self.participants = None
+        self.car_setups = None
+        self.car_telemetry = None
+        self.car_status = None
+        self.final_classification = None
+        self.lobby_info = None
+        self.car_damage = None
+        self.session_history = {}
+        self.tyre_sets = None
+        self.motion_ex = None
+        self.time_trial = None
+        self.lap_positions = None
+        self.events_log = []
 
     async def _on_lap_data(self, data: PacketLapData):
         self.lap_data = data

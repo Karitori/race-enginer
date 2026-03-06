@@ -46,7 +46,11 @@ class PerformanceAnalyzer:
         bus.subscribe("packet_event", self._handle_event)
         bus.subscribe("packet_lap_data", self._handle_lap_data)
         bus.subscribe("packet_car_telemetry", self._handle_car_telemetry)
+        bus.subscribe("race_session_changed", self._handle_race_session_changed)
 
+        self._reset_session_state()
+
+    def _reset_session_state(self) -> None:
         # State tracking
         self.last_lap = 0
         self.tire_warning_issued = False
@@ -87,6 +91,10 @@ class PerformanceAnalyzer:
         self._drs_call_cooldown_sec = _parse_float(
             os.getenv("FEEDBACK_DRS_CALL_COOLDOWN_SEC"), 10.0
         )
+
+    async def _handle_race_session_changed(self, data: dict | None = None):
+        self._reset_session_state()
+        logger.info("Feedback Engine: reset state for new race session (%s).", data or {})
 
     @staticmethod
     def _gap_seconds(delta_ms: int | None) -> float | None:

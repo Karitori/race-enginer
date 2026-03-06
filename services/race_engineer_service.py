@@ -52,14 +52,13 @@ class RaceEngineerService:
 
     def __init__(self):
         self.client = ChatClient(role="advisor", temperature=0.3)
+        self._thread_base_id = os.getenv("RACE_ENGINEER_THREAD_ID", "race-engineer-main")
         self._rapport_level = 1
         self._active_persona = "focused_teammate"
         self._conversation_history: deque[str] = deque(maxlen=12)
         self._driver_preference = "standard"
-        self._agent = RaceEngineerAgent(
-            telemetry_provider=self,
-            thread_id=os.getenv("RACE_ENGINEER_THREAD_ID", "race-engineer-main"),
-        )
+        self._session_signature: tuple[int, int, int, int] | None = None
+        self._agent = self._build_agent(thread_suffix="bootstrap")
 
         # State tracking (legacy)
         self.latest_telemetry: Optional[TelemetryTick] = None
@@ -105,6 +104,44 @@ class RaceEngineerService:
         bus.subscribe("packet_motion_ex", self._update_motion_ex)
         bus.subscribe("packet_time_trial", self._update_time_trial)
         bus.subscribe("packet_lap_positions", self._update_lap_positions)
+        bus.subscribe("race_session_changed", self._handle_race_session_changed)
+
+    def _build_agent(self, *, thread_suffix: str) -> RaceEngineerAgent:
+        thread_id = f"{self._thread_base_id}:{thread_suffix}"
+        return RaceEngineerAgent(
+            telemetry_provider=self,
+            thread_id=thread_id,
+        )
+
+    def _reset_for_new_session(self, new_signature: tuple[int, int, int, int]) -> None:
+        self._session_signature = new_signature
+        self._conversation_history.clear()
+        self._driver_preference = "standard"
+        self._rapport_level = 1
+        self._active_persona = "focused_teammate"
+        self.latest_telemetry = None
+        self.latest_strategy = None
+        self._car_status = None
+        self._car_damage = None
+        self._session = None
+        self._lap_data = None
+        self._car_telemetry = None
+        self._motion = None
+        self._event = None
+        self._participants = None
+        self._car_setup = None
+        self._final_classification = None
+        self._lobby_info = None
+        self._tyre_sets = None
+        self._motion_ex = None
+        self._time_trial = None
+        self._lap_positions = None
+        self._player_idx = 0
+        self._event_log.clear()
+        self._session_history.clear()
+        session_token = f"uid{new_signature[0]}-st{new_signature[1]}-trk{new_signature[2]}"
+        self._agent = self._build_agent(thread_suffix=session_token)
+        logger.info("RaceEngineerService: reset memory for new race session %s", session_token)
 
     async def _update_telemetry(self, tick: TelemetryTick):
         self.latest_telemetry = tick
@@ -129,7 +166,30 @@ class RaceEngineerService:
         self._car_damage = data
 
     async def _update_session(self, data: PacketSessionData):
+        signature = (
+            int(data.header.session_uid),
+            int(data.session_type),
+            int(data.track_id),
+            int(data.total_laps),
+        )
+        if self._session_signature is None:
+            self._session_signature = signature
         self._session = data
+
+    async def _handle_race_session_changed(self, payload: dict[str, Any]):
+        raw_signature = payload.get("new_signature")
+        if isinstance(raw_signature, tuple):
+            signature = tuple(int(value) for value in raw_signature[:4])
+        elif isinstance(raw_signature, list):
+            signature = tuple(int(value) for value in raw_signature[:4])
+        else:
+            signature = (
+                int(payload.get("session_uid", 0)),
+                int(payload.get("session_type", 0)),
+                int(payload.get("track_id", -1)),
+                int(payload.get("total_laps", 0)),
+            )
+        self._reset_for_new_session(signature)
 
     async def _update_lap_data(self, data: PacketLapData):
         self._lap_data = data

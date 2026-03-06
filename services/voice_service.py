@@ -68,6 +68,7 @@ class VoiceAssistant:
 
         bus.subscribe("driving_insight", self._handle_incoming_insight)
         bus.subscribe("talk_level_changed", self._update_talk_level)
+        bus.subscribe("race_session_changed", self._handle_race_session_changed)
 
         try:
             loop = asyncio.get_running_loop()
@@ -209,6 +210,23 @@ class VoiceAssistant:
             {"text": cleaned, "confidence": float(confidence)},
         )
         await bus.publish("driver_query", DriverQuery(query=cleaned, confidence=confidence))
+
+    async def _handle_race_session_changed(self, payload: dict[str, Any] | None = None) -> None:
+        cleared = 0
+        while True:
+            try:
+                self._priority_queue.get_nowait()
+                cleared += 1
+            except asyncio.QueueEmpty:
+                break
+        self._recent_insight_times.clear()
+        self._seq = 0
+        self.audio_output.interrupt_playback()
+        logger.info(
+            "VOICE ENGINE: reset queue/dedupe for new race session (%s), cleared=%d",
+            payload or {},
+            cleared,
+        )
 
     async def _speaker_loop(self):
         while True:

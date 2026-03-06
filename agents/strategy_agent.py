@@ -39,9 +39,11 @@ class StrategyAgent:
         self._current_poll_interval = float(poll_interval)
         self._last_signature: str | None = None
         self._last_publish_monotonic = 0.0
+        self._active_scope_key: str | None = None
 
         self._client = ChatClient(role="strategy", temperature=0.5)
         self._llm_runner = self._build_llm_runner()
+        bus.subscribe("race_session_changed", self._handle_race_session_changed)
 
         graph = StateGraph(StrategyState)
         graph.add_node("collect_metrics", make_collect_metrics_node(self.repository))
@@ -110,6 +112,16 @@ class StrategyAgent:
                 self._current_poll_interval = float(self.poll_interval)
                 return
 
+            scope = snapshot.get("scope", {}) if isinstance(snapshot.get("scope"), dict) else {}
+            scope_key = (
+                f"{scope.get('session_uid')}|{scope.get('session_type')}|"
+                f"{scope.get('track_id')}|{scope.get('total_laps')}"
+            )
+            if self._active_scope_key != scope_key:
+                self._active_scope_key = scope_key
+                self._reset_publish_state()
+                logger.info("StrategyAgent: activated new session scope %s", scope_key)
+
             summary = state.get("summary")
             recommendation = state.get("recommendation")
             criticality = int(state.get("criticality", 2))
@@ -147,6 +159,16 @@ class StrategyAgent:
 
         except Exception as exc:
             logger.error("LangGraph strategy agent run failed: %s", exc)
+
+    async def _handle_race_session_changed(self, _: dict[str, Any] | None = None) -> None:
+        self._reset_publish_state()
+        self._active_scope_key = None
+        self._current_poll_interval = float(self.poll_interval)
+        logger.info("StrategyAgent: reset publish state for new race session.")
+
+    def _reset_publish_state(self) -> None:
+        self._last_signature = None
+        self._last_publish_monotonic = 0.0
 
     def _poll_interval_for_criticality(self, criticality: int) -> float:
         if criticality >= 5:
@@ -194,5 +216,4 @@ class StrategyAgent:
             return True
 
         return False
-
 

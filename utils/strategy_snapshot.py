@@ -51,19 +51,18 @@ def _active_scope(repository: TelemetryRepository) -> dict[str, Any] | None:
     run_id = str(run_row[0])
     run_started_at = run_row[1]
     run_started_literal = _timestamp_literal(run_started_at)
-    session_row = first_or_none(
+    latest_session_row = first_or_none(
         repository.query(
             f"""
-            SELECT session_uid, MAX(timestamp) AS latest_packet_ts
-            FROM raw_packets
+            SELECT timestamp, session_uid, session_type, track_id, total_laps
+            FROM session_data
             WHERE timestamp >= {run_started_literal}
-            GROUP BY session_uid
-            ORDER BY latest_packet_ts DESC
+            ORDER BY timestamp DESC
             LIMIT 1
             """
         )
     )
-    if not session_row or session_row[0] is None:
+    if not latest_session_row or latest_session_row[1] is None:
         return {
             "run_id": run_id,
             "run_started_at": str(run_started_at),
@@ -71,11 +70,39 @@ def _active_scope(repository: TelemetryRepository) -> dict[str, Any] | None:
             "session_uid": None,
         }
 
+    latest_ts = latest_session_row[0]
+    session_uid = _to_int(latest_session_row[1], default=0)
+    session_type = _to_int(latest_session_row[2], default=0)
+    track_id = _to_int(latest_session_row[3], default=-1)
+    total_laps = _to_int(latest_session_row[4], default=0)
+
+    session_start_row = first_or_none(
+        repository.query(
+            f"""
+            SELECT MIN(timestamp)
+            FROM session_data
+            WHERE timestamp >= {run_started_literal}
+              AND session_uid = {session_uid}
+              AND session_type = {session_type}
+              AND track_id = {track_id}
+              AND total_laps = {total_laps}
+            """
+        )
+    )
+    session_started_at = session_start_row[0] if session_start_row and session_start_row[0] is not None else latest_ts
+    session_started_literal = _timestamp_literal(session_started_at)
+
     return {
         "run_id": run_id,
         "run_started_at": str(run_started_at),
         "run_started_literal": run_started_literal,
-        "session_uid": int(session_row[0]),
+        "session_uid": session_uid,
+        "session_type": session_type,
+        "track_id": track_id,
+        "total_laps": total_laps,
+        "session_started_at": str(session_started_at),
+        "session_started_literal": session_started_literal,
+        "latest_session_tick": str(latest_ts),
     }
 
 
@@ -88,8 +115,8 @@ def collect_strategy_snapshot(repository: TelemetryRepository) -> dict[str, Any]
         return {"ready": False, "reason": "waiting_for_live_packets", "scope": scope}
 
     session_uid = int(scope["session_uid"])
-    run_started_literal = str(scope["run_started_literal"])
-    scope_filter = f"session_uid = {session_uid} AND timestamp >= {run_started_literal}"
+    session_started_literal = str(scope["session_started_literal"])
+    scope_filter = f"session_uid = {session_uid} AND timestamp >= {session_started_literal}"
 
     wear_rows = repository.query(
         f"""
