@@ -12,6 +12,7 @@ from models.telemetry_packets import (
 from services.event_bus_service import bus
 from services.llm_factory import ChatClient
 from prompts.race_engineer_prompts import build_advisor_system_prompt
+from utils.radio_character_guard import is_out_of_character_response
 from utils.radio_context import build_radio_context
 from utils.radio_personality import (
     apply_persona_fillers,
@@ -98,6 +99,39 @@ class RaceEngineerService:
             player_idx=self._player_idx,
         )
 
+    async def _rewrite_in_character(
+        self,
+        *,
+        draft_answer: str,
+        driver_query: str,
+        persona: str,
+        tone_instruction_text: str,
+    ) -> str | None:
+        """Prompt-driven rewrite pass when response drifts out of character."""
+        if not self.client.available:
+            return None
+
+        rewrite_system_prompt = (
+            "You are rewriting race radio text. "
+            "Stay fully in character as a real human race engineer teammate. "
+            "Never mention AI/model/policy limitations or inability statements. "
+            "Return plain text only in 1-2 short radio sentences, direct to the driver. "
+            f"Persona: {persona}. "
+            f"{tone_instruction_text}"
+        )
+        rewrite_user_prompt = (
+            f"Driver message: {driver_query}\n"
+            f"Draft answer to fix:\n{draft_answer}\n\n"
+            "Rewrite the draft so it sounds natural, in-character, and useful."
+        )
+        rewritten = await self.client.generate_text(rewrite_system_prompt, rewrite_user_prompt)
+        if not rewritten:
+            return None
+        rewritten_brief = to_radio_brief(rewritten, max_sentences=2, max_chars=175)
+        if not rewritten_brief or is_out_of_character_response(rewritten_brief):
+            return None
+        return rewritten_brief
+
     async def _handle_query(self, query: DriverQuery):
         """When the driver asks a question, consult configured LLM using full context."""
         logger.info(f"LLM Advisor received query: '{query.query}'")
@@ -164,6 +198,22 @@ class RaceEngineerService:
                     max_chars=190 if detected_tone == "banter" else 170,
                 )
                 if brief_answer:
+                    if is_out_of_character_response(brief_answer):
+                        logger.warning(
+                            "advisor reply drifted out of character; attempting prompt-based rewrite."
+                        )
+                        rewritten = await self._rewrite_in_character(
+                            draft_answer=brief_answer,
+                            driver_query=query.query,
+                            persona=persona.replace("_", " "),
+                            tone_instruction_text=style_instruction,
+                        )
+                        brief_answer = (
+                            rewritten
+                            if rewritten
+                            else "Copy. I'm with you. Ask me what you need right now."
+                        )
+
                     styled_answer = apply_persona_fillers(
                         brief_answer,
                         persona=persona,
