@@ -67,14 +67,23 @@ class VoiceAssistant:
         action: str,
         enabled: bool | None = None,
         mode: str | None = None,
+        mic_index: int | None = None,
     ) -> dict[str, Any]:
         status = self.audio_input.apply_control_action(
             action=action,
             enabled=enabled,
             mode=mode,
+            mic_index=mic_index,
         )
         await bus.publish("stt_status", status)
         return status
+
+    def get_stt_devices(self) -> dict[str, Any]:
+        names = self.audio_input.list_microphone_names()
+        return {
+            "devices": [{"index": idx, "name": name} for idx, name in enumerate(names)],
+            "selected_index": self.audio_input.mic_index,
+        }
 
     async def _update_talk_level(self, data: dict[str, Any]):
         self.talk_level = int(data.get("talk_level", 5))
@@ -140,6 +149,10 @@ class VoiceAssistant:
             return
         self._barge_in_if_driver_speaks()
         logger.info("VOICE INPUT: '%s' (conf %.2f)", cleaned, confidence)
+        await bus.publish(
+            "driver_transcript",
+            {"text": cleaned, "confidence": float(confidence)},
+        )
         await bus.publish("driver_query", DriverQuery(query=cleaned, confidence=confidence))
 
     async def _speaker_loop(self):

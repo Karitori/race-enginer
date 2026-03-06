@@ -43,6 +43,8 @@ def test_audio_input_control_toggle_default_off(monkeypatch):
     status = service.get_control_status()
     assert status["control_mode"] == "toggle"
     assert status["capture_gate_open"] is False
+    assert "mic_index" in status
+    assert "mic_name" in status
 
 
 def test_audio_input_control_toggle_action(monkeypatch):
@@ -62,6 +64,13 @@ def test_audio_input_control_ptt_actions(monkeypatch):
     assert status_down["capture_gate_open"] is True
     status_up = service.apply_control_action(action="ptt_up")
     assert status_up["capture_gate_open"] is False
+
+
+def test_audio_input_control_set_mic(monkeypatch):
+    monkeypatch.setenv("VOICE_STT_BACKEND", "whisper")
+    service = AudioInputService()
+    status = service.apply_control_action(action="set_mic", mic_index=2)
+    assert status["mic_index"] == 2
 
 
 def test_audio_output_can_be_disabled(monkeypatch):

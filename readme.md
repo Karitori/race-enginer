@@ -125,10 +125,13 @@ Temperatures can still be set globally (`LLM_TEMPERATURE`) or per role (`STRATEG
 - Optional mic STT is locked to Whisper Turbo via `VOICE_ENABLE_STT=true` and `VOICE_STT_BACKEND=whisper`.
   - `VOICE_STT_WHISPER_MODEL=turbo` (or a local Turbo model path)
   - optional: `VOICE_STT_WHISPER_DEVICE=cuda`, `VOICE_STT_WHISPER_COMPUTE_TYPE=float16`.
+  - optional explicit input device: `VOICE_STT_MIC_INDEX=<device_index>`.
+  - optional detection tuning: `VOICE_STT_DYNAMIC_ENERGY_THRESHOLD=true`, `VOICE_STT_ENERGY_THRESHOLD=300`.
   - comms control mode: `VOICE_STT_CONTROL_MODE=toggle|ptt|always` (recommended: `toggle` or `ptt`).
   - for toggle mode startup state: `VOICE_STT_TOGGLE_DEFAULT_ON=false`.
   - optional VAD filter remains configurable (`VOICE_STT_WHISPER_VAD_FILTER=false` recommended for race-radio realism).
-  - dashboard includes mic controls: Toggle Mic, Hold-To-Talk, mode selector, and Space-key PTT binding.
+  - dashboard includes mic controls: Toggle Mic, Hold-To-Talk, mode selector, microphone selector, and Space-key PTT binding.
+  - recognized speech is shown live in comms log as `[YOU] ...` so you can verify STT capture.
   - driver barge-in is enabled: if you speak while TTS is talking, current engineer audio is interrupted and your query is prioritized.
 - Voice queue summarization now uses structured LLM output instead of manual JSON parsing.
 

@@ -378,6 +378,15 @@
                         </select>
                         <span style="font-size:10px; color:#555;">PTT key: Space</span>
                     </div>
+                    <div style="display:flex; align-items:center; gap:6px; margin-top:6px;">
+                        <span style="font-size:11px; color:#8b949e;">Mic</span>
+                        <select id="stt-mic" onchange="setSttMic()"
+                            style="flex:1; background:#000; color:#fff; border:1px solid #30363d; border-radius:4px; padding:3px 6px; font-size:11px;">
+                            <option value="-1">Default Input</option>
+                        </select>
+                        <button id="stt-mic-refresh" style="width:auto; margin:0; padding:5px 8px;" onclick="fetchSttDevices()">Refresh</button>
+                    </div>
+                    <div id="stt-mic-active" style="font-size:10px; color:#8b949e; margin-top:4px;">Active mic: default</div>
                 </div>
             </div>
         </div>
@@ -447,6 +456,7 @@
 
         var bestLapTime = 0;
         var sttState = {control_mode: "toggle", capture_gate_open: false, capture_active: false};
+        var sttDevices = [];
 
         function updateSttUi(payload) {
             if (!payload) return;
@@ -455,13 +465,24 @@
             var modeSelect = document.getElementById('stt-mode');
             var toggleBtn = document.getElementById('mic-toggle-btn');
             var pttBtn = document.getElementById('ptt-btn');
+            var micSelect = document.getElementById('stt-mic');
+            var activeMicEl = document.getElementById('stt-mic-active');
 
             if (modeSelect && payload.control_mode) {
                 modeSelect.value = payload.control_mode;
             }
+            if (micSelect && payload.mic_index !== undefined && payload.mic_index !== null) {
+                micSelect.value = String(payload.mic_index);
+            } else if (micSelect && (payload.mic_index === null || payload.mic_index === undefined)) {
+                micSelect.value = "-1";
+            }
             var micOn = !!payload.capture_gate_open;
             badge.innerText = micOn ? "MIC ON" : "MIC OFF";
             badge.className = "indicator " + (micOn ? "ind-green" : "ind-red");
+            if (activeMicEl) {
+                var name = payload.mic_name || "default";
+                activeMicEl.innerText = "Active mic: " + name;
+            }
 
             var mode = payload.control_mode || "toggle";
             toggleBtn.disabled = mode === "always";
@@ -493,6 +514,24 @@
                 });
         }
 
+        function fetchSttDevices() {
+            fetch('/api/stt_devices')
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    if (data.status !== 'success') return;
+                    sttDevices = data.devices || [];
+                    var micSelect = document.getElementById('stt-mic');
+                    var html = '<option value="-1">Default Input</option>';
+                    for (var i = 0; i < sttDevices.length; i++) {
+                        var dev = sttDevices[i];
+                        html += '<option value="' + dev.index + '">' + dev.index + ': ' + dev.name + '</option>';
+                    }
+                    micSelect.innerHTML = html;
+                    var selected = data.selected_index;
+                    micSelect.value = selected === null || selected === undefined ? "-1" : String(selected);
+                });
+        }
+
         function toggleMic() {
             postSttControl({action: 'toggle'});
         }
@@ -500,6 +539,16 @@
         function setSttMode() {
             var mode = document.getElementById('stt-mode').value;
             postSttControl({action: 'mode', mode: mode});
+        }
+
+        function setSttMic() {
+            var selectedRaw = document.getElementById('stt-mic').value;
+            var selected = parseInt(selectedRaw);
+            if (isNaN(selected) || selected < 0) {
+                postSttControl({action: 'set_mic', mic_index: null});
+                return;
+            }
+            postSttControl({action: 'set_mic', mic_index: selected});
         }
 
         function pttDown() {
@@ -582,6 +631,7 @@
         fetch('/api/telemetry_status').then(function(r) { return r.json(); })
         .then(function(d) { updateConnUI(d.mode, d.status, d.host, d.port); });
         fetchSttStatus();
+        fetchSttDevices();
 
         document.addEventListener('keydown', function(e) {
             if (e.code !== 'Space' || e.repeat) return;
@@ -717,6 +767,13 @@
                 if (d.type === "encouragement") cls = "encourage";
                 if (d.type === "strategy") cls = "strat-log";
                 addLog('insights', '[ENGINEER] ' + d.message, cls);
+            } else if (msg.topic === "driver_transcript") {
+                var t = msg.payload || {};
+                var confText = "";
+                if (typeof t.confidence === "number") {
+                    confText = " (" + Math.round(t.confidence * 100) + "%)";
+                }
+                addLog('insights', '[YOU] ' + (t.text || '') + confText, 'info-log');
 
             } else if (msg.topic === "agent_status") {
                 addLog('agent-log', '> ' + msg.payload.message, 'agent-log');

@@ -145,6 +145,9 @@ async def websocket_endpoint(websocket: WebSocket):
     async def stt_status_handler(data):
         await queue.put({"topic": "stt_status", "payload": data})
 
+    async def driver_transcript_handler(data):
+        await queue.put({"topic": "driver_transcript", "payload": data})
+
     bus.subscribe("telemetry_tick", telemetry_handler)
     bus.subscribe("driving_insight", insight_handler)
     bus.subscribe("packet_car_telemetry", car_telemetry_handler)
@@ -155,6 +158,7 @@ async def websocket_endpoint(websocket: WebSocket):
     bus.subscribe("packet_event", event_handler)
     bus.subscribe("telemetry_status", telemetry_status_handler)
     bus.subscribe("stt_status", stt_status_handler)
+    bus.subscribe("driver_transcript", driver_transcript_handler)
 
     voice_assistant = get_voice_assistant()
     if voice_assistant is not None:
@@ -184,3 +188,4 @@ async def websocket_endpoint(websocket: WebSocket):
         bus.unsubscribe("packet_event", event_handler)
         bus.unsubscribe("telemetry_status", telemetry_status_handler)
         bus.unsubscribe("stt_status", stt_status_handler)
+        bus.unsubscribe("driver_transcript", driver_transcript_handler)

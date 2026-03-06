@@ -70,7 +70,7 @@ async def get_stt_status():
 
 @router.post("/api/stt_control")
 async def set_stt_control(payload: STTControlPayload):
-    """Control STT gating (toggle, set, ptt_down, ptt_up, mode, reset)."""
+    """Control STT gating (toggle, set, ptt_down, ptt_up, mode, set_mic, reset)."""
     voice_assistant = get_voice_assistant()
     if voice_assistant is None:
         return {"status": "error", "error": "Voice assistant not initialized"}
@@ -78,5 +78,16 @@ async def set_stt_control(payload: STTControlPayload):
         action=payload.action,
         enabled=payload.enabled,
         mode=payload.mode,
+        mic_index=payload.mic_index,
     )
     return {"status": "success", **status}
+
+
+@router.get("/api/stt_devices")
+async def get_stt_devices():
+    """List available microphone devices for STT."""
+    voice_assistant = get_voice_assistant()
+    if voice_assistant is None:
+        return {"status": "error", "error": "Voice assistant not initialized"}
+    payload = voice_assistant.get_stt_devices()
+    return {"status": "success", **payload}

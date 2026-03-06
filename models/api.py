@@ -19,3 +19,4 @@ class STTControlPayload(BaseModel):
     action: str
     enabled: bool | None = None
     mode: str | None = None
+    mic_index: int | None = None

@@ -32,6 +32,18 @@ def _parse_int(raw: str | None, default: int) -> int:
         return default
 
 
+def _parse_optional_int(raw: str | None) -> int | None:
+    if raw is None:
+        return None
+    cleaned = raw.strip()
+    if cleaned == "":
+        return None
+    try:
+        return int(cleaned)
+    except ValueError:
+        return None
+
+
 def _is_remote_resource(path_or_uri: str) -> bool:
     cleaned = path_or_uri.strip().lower()
     return cleaned.startswith("http://") or cleaned.startswith("https://") or cleaned.startswith(
@@ -67,6 +79,11 @@ class AudioInputService:
         self.timeout_sec = _parse_float(os.getenv("VOICE_STT_TIMEOUT_SEC"), 4.0)
         self.phrase_limit_sec = _parse_float(os.getenv("VOICE_STT_PHRASE_LIMIT_SEC"), 6.0)
         self.ambient_sec = _parse_float(os.getenv("VOICE_STT_AMBIENT_SEC"), 0.4)
+        self.mic_index = _parse_optional_int(os.getenv("VOICE_STT_MIC_INDEX"))
+        self.dynamic_energy_threshold = _parse_bool(
+            os.getenv("VOICE_STT_DYNAMIC_ENERGY_THRESHOLD"), True
+        )
+        self.energy_threshold = _parse_optional_int(os.getenv("VOICE_STT_ENERGY_THRESHOLD"))
 
         self.whisper_model = (os.getenv("VOICE_STT_WHISPER_MODEL", "turbo") or "turbo").strip()
         self.whisper_device = (
@@ -91,6 +108,9 @@ class AudioInputService:
         self._whisper_model: Any = None
         self._whisper_model_ref: str = "turbo"
         self._ambient_calibrated = False
+        self._mic_name = "default"
+        self._last_error: str | None = None
+        self._gate_wait_logged = False
         self._toggle_active = _parse_bool(os.getenv("VOICE_STT_TOGGLE_DEFAULT_ON"), False)
         self._ptt_pressed = False
         self._setup_backend()
@@ -121,6 +141,41 @@ class AudioInputService:
             return mode
         return "toggle"
 
+    @staticmethod
+    def list_microphone_names() -> list[str]:
+        try:
+            import speech_recognition as sr  # type: ignore
+
+            names = sr.Microphone.list_microphone_names()
+            return [str(name) for name in names]
+        except Exception:
+            return []
+
+    def _resolve_mic_name(self) -> str:
+        names = self.list_microphone_names()
+        if self.mic_index is None:
+            return "default"
+        if 0 <= self.mic_index < len(names):
+            return names[self.mic_index]
+        return f"index:{self.mic_index}"
+
+    def _build_microphone(self) -> None:
+        if not self._sr:
+            self._microphone = None
+            return
+        try:
+            if self.mic_index is None:
+                self._microphone = self._sr.Microphone()
+            else:
+                self._microphone = self._sr.Microphone(device_index=self.mic_index)
+            self._mic_name = self._resolve_mic_name()
+        except Exception as exc:
+            self._last_error = f"failed to initialize microphone index {self.mic_index}: {exc}"
+            logger.warning("%s", self._last_error)
+            self.mic_index = None
+            self._microphone = self._sr.Microphone()
+            self._mic_name = "default"
+
     def _is_capture_gate_open(self) -> bool:
         if self.control_mode == "always":
             return True
@@ -134,11 +189,14 @@ class AudioInputService:
             "enabled": self.enabled,
             "available": self._available,
             "backend": self.backend,
+            "mic_index": self.mic_index,
+            "mic_name": self._mic_name,
             "control_mode": self.control_mode,
             "toggle_active": self._toggle_active,
             "ptt_pressed": self._ptt_pressed,
             "capture_gate_open": gate_open,
             "capture_active": gate_open and self.available,
+            "last_error": self._last_error,
         }
 
     def apply_control_action(
@@ -147,6 +205,7 @@ class AudioInputService:
         action: str,
         enabled: bool | None = None,
         mode: str | None = None,
+        mic_index: int | None = None,
     ) -> dict[str, Any]:
         normalized_action = (action or "").strip().lower()
         if normalized_action == "toggle":
@@ -160,9 +219,17 @@ class AudioInputService:
             self._ptt_pressed = False
         elif normalized_action == "mode":
             self.control_mode = self._normalize_control_mode(mode)
+        elif normalized_action == "set_mic":
+            self.mic_index = None if mic_index is None or mic_index < 0 else int(mic_index)
+            self._ambient_calibrated = False
+            if self._sr is not None:
+                self._build_microphone()
+            else:
+                self._mic_name = self._resolve_mic_name()
         elif normalized_action == "reset":
             self._toggle_active = _parse_bool(os.getenv("VOICE_STT_TOGGLE_DEFAULT_ON"), False)
             self._ptt_pressed = False
+            self._last_error = None
         return self.get_control_status()
 
     def _setup_whisper(self) -> None:
@@ -195,7 +262,10 @@ class AudioInputService:
 
             self._sr = sr
             self._recognizer = sr.Recognizer()
-            self._microphone = sr.Microphone()
+            self._recognizer.dynamic_energy_threshold = self.dynamic_energy_threshold
+            if self.energy_threshold is not None:
+                self._recognizer.energy_threshold = max(10, self.energy_threshold)
+            self._build_microphone()
             self._whisper_model = WhisperModel(
                 model_size_or_path=self._whisper_model_ref,
                 device=self.whisper_device,
@@ -204,10 +274,16 @@ class AudioInputService:
             )
             self._available = True
             logger.info(
-                "whisper turbo STT backend enabled (model=%s, device=%s, compute_type=%s)",
+                (
+                    "whisper turbo STT backend enabled "
+                    "(model=%s, device=%s, compute_type=%s, mic=%s, dynamic_energy=%s, energy=%s)"
+                ),
                 self._whisper_model_ref,
                 self.whisper_device,
                 self.whisper_compute_type,
+                self._mic_name,
+                self.dynamic_energy_threshold,
+                self._recognizer.energy_threshold if self._recognizer else "n/a",
             )
         except Exception as exc:
             logger.warning("whisper STT initialization failed: %s", exc)
@@ -224,8 +300,17 @@ class AudioInputService:
         loop = asyncio.get_running_loop()
         while self._running:
             if not self._is_capture_gate_open():
+                if not self._gate_wait_logged:
+                    logger.info(
+                        "stt capture paused (mode=%s). open mic via toggle/PTT to listen.",
+                        self.control_mode,
+                    )
+                    self._gate_wait_logged = True
                 await asyncio.sleep(0.04)
                 continue
+            if self._gate_wait_logged:
+                logger.info("stt capture gate opened; listening.")
+                self._gate_wait_logged = False
             result = await loop.run_in_executor(None, self._listen_once)
             if result is None:
                 continue
@@ -261,6 +346,7 @@ class AudioInputService:
         except self._sr.UnknownValueError:
             return None
         except Exception as exc:
+            self._last_error = f"stt capture error: {exc}"
             logger.debug("stt capture error: %s", exc)
             return None
 
@@ -298,8 +384,10 @@ class AudioInputService:
             )
             logprob_conf = max(0.0, min(1.0, 1.0 + avg_logprob))
             confidence = max(0.0, min(1.0, 0.5 * language_probability + 0.5 * logprob_conf))
+            self._last_error = None
             return text, confidence
         except Exception as exc:
+            self._last_error = f"whisper transcription error: {exc}"
             logger.debug("whisper transcription error: %s", exc)
             return None
         finally:
