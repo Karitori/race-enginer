@@ -1,7 +1,11 @@
 import pytest
 
 from services.audio_input_service import AudioInputService
-from services.audio_output_service import AudioOutputService
+from services.audio_output_service import (
+    AudioOutputService,
+    _parse_piper_extra_args,
+    _select_pyttsx3_voice_id,
+)
 
 
 def test_audio_input_disabled_by_default(monkeypatch):
@@ -54,3 +58,21 @@ def test_audio_output_piper_enabled_when_exe_and_model_exist(monkeypatch, tmp_pa
     )
     service = AudioOutputService()
     assert service.available
+
+
+def test_parse_piper_extra_args():
+    parsed = _parse_piper_extra_args("--length_scale 0.95 --noise_scale 0.667")
+    assert parsed == ["--length_scale", "0.95", "--noise_scale", "0.667"]
+
+
+class _FakeVoice:
+    def __init__(self, voice_id: str, name: str):
+        self.id = voice_id
+        self.name = name
+        self.languages = ["en-US"]
+
+
+def test_select_pyttsx3_voice_id_prefers_hint():
+    voices = [_FakeVoice("v1", "Microsoft David"), _FakeVoice("v2", "Microsoft Jenny")]
+    selected = _select_pyttsx3_voice_id(voices, hint="jenny")
+    assert selected == "v2"

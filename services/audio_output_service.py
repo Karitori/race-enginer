@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -25,6 +26,72 @@ def _parse_int(raw: str | None, default: int) -> int:
     return value
 
 
+def _parse_float(raw: str | None, default: float) -> float:
+    if raw is None:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        return default
+    return value
+
+
+def _clamp_float(value: float, low: float, high: float) -> float:
+    return max(low, min(high, value))
+
+
+def _voice_text(voice: Any) -> str:
+    parts: list[str] = []
+    for attr in ("id", "name", "gender"):
+        value = getattr(voice, attr, "")
+        if value:
+            parts.append(str(value))
+    languages = getattr(voice, "languages", [])
+    if isinstance(languages, (list, tuple)):
+        for language in languages:
+            if isinstance(language, bytes):
+                parts.append(language.decode("utf-8", errors="ignore"))
+            else:
+                parts.append(str(language))
+    return " ".join(parts).lower()
+
+
+def _select_pyttsx3_voice_id(voices: list[Any], hint: str | None = None) -> str | None:
+    if not voices:
+        return None
+
+    cleaned_hint = (hint or "").strip().lower()
+    if cleaned_hint:
+        for voice in voices:
+            if cleaned_hint in _voice_text(voice):
+                return getattr(voice, "id", None)
+
+    preferred_tokens = [
+        "jenny",
+        "aria",
+        "zira",
+        "hazel",
+        "susan",
+        "guy",
+        "david",
+    ]
+    for token in preferred_tokens:
+        for voice in voices:
+            if token in _voice_text(voice):
+                return getattr(voice, "id", None)
+
+    return getattr(voices[0], "id", None)
+
+
+def _parse_piper_extra_args(raw: str | None) -> list[str]:
+    if not raw:
+        return []
+    try:
+        return [arg.strip() for arg in shlex.split(raw, posix=False) if arg.strip()]
+    except ValueError:
+        return []
+
+
 class AudioOutputService:
     """Audio output wrapper that supports pluggable TTS backends."""
 
@@ -32,7 +99,10 @@ class AudioOutputService:
         self.backend = (os.getenv("VOICE_TTS_BACKEND", "pyttsx3") or "pyttsx3").strip().lower()
         self.enabled = _parse_bool(os.getenv("VOICE_ENABLE_TTS"), True)
         self.rate = _parse_int(os.getenv("VOICE_TTS_RATE"), 170)
+        self.volume = _clamp_float(_parse_float(os.getenv("VOICE_TTS_VOLUME"), 1.0), 0.0, 1.0)
+        self.pyttsx3_voice_hint = (os.getenv("VOICE_PYTTS3_VOICE_HINT", "") or "").strip()
         self._simulate_delay = _parse_bool(os.getenv("VOICE_SIMULATE_DELAY"), True)
+        self._piper_extra_args = _parse_piper_extra_args(os.getenv("VOICE_PIPER_EXTRA_ARGS"))
 
         self._engine: Any = None
         self._piper_executable: str | None = None
@@ -66,7 +136,20 @@ class AudioOutputService:
 
             self._engine = pyttsx3.init()  # type: ignore
             self._engine.setProperty("rate", self.rate)  # type: ignore
+            self._engine.setProperty("volume", self.volume)  # type: ignore
+            voices = self._engine.getProperty("voices") or []  # type: ignore
+            selected_voice_id = _select_pyttsx3_voice_id(
+                list(voices), self.pyttsx3_voice_hint
+            )
+            if selected_voice_id:
+                self._engine.setProperty("voice", selected_voice_id)  # type: ignore
             self._available = True
+            logger.info(
+                "pyttsx3 backend enabled (rate=%d, volume=%.2f, voice=%s)",
+                self.rate,
+                self.volume,
+                selected_voice_id or "default",
+            )
         except Exception as exc:
             logger.warning("pyttsx3 initialization failed: %s", exc)
             self._engine = None
@@ -108,7 +191,11 @@ class AudioOutputService:
         self._piper_model_path = model_path
         self._piper_speaker_id = speaker_id
         self._available = True
-        logger.info("piper backend enabled with model=%s", model_path)
+        logger.info(
+            "piper backend enabled with model=%s extra_args=%s",
+            model_path,
+            " ".join(self._piper_extra_args) if self._piper_extra_args else "(none)",
+        )
 
     async def speak(self, message: str) -> None:
         if not message:
@@ -152,6 +239,8 @@ class AudioOutputService:
             ]
             if self._piper_speaker_id is not None:
                 command.extend(["--speaker", str(self._piper_speaker_id)])
+            if self._piper_extra_args:
+                command.extend(self._piper_extra_args)
 
             subprocess.run(
                 command,

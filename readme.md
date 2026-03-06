@@ -125,6 +125,11 @@ Temperatures can be set globally (`LLM_TEMPERATURE`) or per role (`STRATEGY_TEMP
   - `VOICE_TTS_BACKEND=piper`
   - `VOICE_PIPER_MODEL_PATH=...` (required)
   - optional: `VOICE_PIPER_EXE`, `VOICE_PIPER_SPEAKER_ID`
+- Strictly local flow (no model downloads from app scripts):
+  1. Place your local Piper `.onnx` model (and `.onnx.json`) on disk.
+  2. Run:
+     `powershell -ExecutionPolicy Bypass -File .\configure_local_piper.ps1 -ModelPath "D:\path\voice.onnx"`
+  3. Copy generated lines from `.env.piper.local` into `.env`.
 - Optional mic STT is supported via `VOICE_ENABLE_STT=true` and `VOICE_STT_BACKEND=speech_recognition`.
 - Voice queue summarization now uses structured LLM output instead of manual JSON parsing.
 
