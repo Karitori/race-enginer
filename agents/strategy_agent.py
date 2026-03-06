@@ -104,6 +104,12 @@ class StrategyAgent:
     async def _run_once(self) -> None:
         try:
             state: dict[str, Any] = await self._graph.ainvoke({})
+            snapshot = state.get("snapshot")
+            if not isinstance(snapshot, dict) or not snapshot.get("ready"):
+                logger.debug("Strategy insight skipped: waiting for active telemetry session.")
+                self._current_poll_interval = float(self.poll_interval)
+                return
+
             summary = state.get("summary")
             recommendation = state.get("recommendation")
             criticality = int(state.get("criticality", 2))
@@ -188,6 +194,5 @@ class StrategyAgent:
             return True
 
         return False
-
 
 

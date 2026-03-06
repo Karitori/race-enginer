@@ -3,8 +3,37 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def _column_exists(conn, table_name: str, column_name: str) -> bool:
+    columns = conn.execute(f"PRAGMA table_info('{table_name}')").fetchall()
+    return any(str(col[1]).lower() == column_name.lower() for col in columns)
+
+
+def _ensure_column(
+    conn,
+    table_name: str,
+    column_name: str,
+    column_type: str,
+    default_sql: str | None = None,
+) -> None:
+    if _column_exists(conn, table_name, column_name):
+        return
+    statement = f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}"
+    if default_sql:
+        statement = f"{statement} DEFAULT {default_sql}"
+    conn.execute(statement)
+
+
 def init_db(conn, db_path: str):
     """Creates all tables if they don't exist."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS app_runs (
+            run_id VARCHAR PRIMARY KEY,
+            started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """
+    )
+
     # Legacy telemetry table (backward compat)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS telemetry (
@@ -41,6 +70,7 @@ def init_db(conn, db_path: str):
     conn.execute("""
         CREATE TABLE IF NOT EXISTS session_data (
             timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            session_uid BIGINT,
             weather INTEGER,
             track_temperature INTEGER,
             air_temperature INTEGER,
@@ -60,6 +90,7 @@ def init_db(conn, db_path: str):
     conn.execute("""
         CREATE TABLE IF NOT EXISTS lap_data (
             timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            session_uid BIGINT,
             car_index INTEGER,
             last_lap_time_in_ms INTEGER,
             current_lap_time_in_ms INTEGER,
@@ -84,6 +115,7 @@ def init_db(conn, db_path: str):
     conn.execute("""
         CREATE TABLE IF NOT EXISTS car_status (
             timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            session_uid BIGINT,
             car_index INTEGER,
             fuel_mix INTEGER,
             fuel_in_tank DOUBLE,
@@ -107,6 +139,7 @@ def init_db(conn, db_path: str):
     conn.execute("""
         CREATE TABLE IF NOT EXISTS car_damage (
             timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            session_uid BIGINT,
             car_index INTEGER,
             tyres_wear_rl DOUBLE,
             tyres_wear_rr DOUBLE,
@@ -139,6 +172,7 @@ def init_db(conn, db_path: str):
     conn.execute("""
         CREATE TABLE IF NOT EXISTS car_telemetry_ext (
             timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            session_uid BIGINT,
             car_index INTEGER,
             brakes_temp_rl INTEGER,
             brakes_temp_rr INTEGER,
@@ -167,6 +201,7 @@ def init_db(conn, db_path: str):
     conn.execute("""
         CREATE TABLE IF NOT EXISTS race_events (
             timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            session_uid BIGINT,
             event_code VARCHAR,
             vehicle_idx INTEGER,
             detail_text VARCHAR
@@ -176,6 +211,8 @@ def init_db(conn, db_path: str):
     # Session history (per lap)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS session_history (
+            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            session_uid BIGINT,
             car_index INTEGER,
             lap_num INTEGER,
             lap_time_in_ms INTEGER,
@@ -190,6 +227,7 @@ def init_db(conn, db_path: str):
     conn.execute("""
         CREATE TABLE IF NOT EXISTS motion_data (
             timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            session_uid BIGINT,
             car_index INTEGER,
             world_position_x DOUBLE,
             world_position_y DOUBLE,
@@ -202,6 +240,17 @@ def init_db(conn, db_path: str):
             roll DOUBLE
         )
     """)
+
+    # Lightweight migrations for users on older schemas.
+    _ensure_column(conn, "session_data", "session_uid", "BIGINT")
+    _ensure_column(conn, "lap_data", "session_uid", "BIGINT")
+    _ensure_column(conn, "car_status", "session_uid", "BIGINT")
+    _ensure_column(conn, "car_damage", "session_uid", "BIGINT")
+    _ensure_column(conn, "car_telemetry_ext", "session_uid", "BIGINT")
+    _ensure_column(conn, "race_events", "session_uid", "BIGINT")
+    _ensure_column(conn, "session_history", "timestamp", "TIMESTAMP", "CURRENT_TIMESTAMP")
+    _ensure_column(conn, "session_history", "session_uid", "BIGINT")
+    _ensure_column(conn, "motion_data", "session_uid", "BIGINT")
     
     logger.info(f"TelemetryStore initialized at {db_path} with all tables.")
     

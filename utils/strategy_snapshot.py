@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Any
 
 from db.contracts import TelemetryRepository
@@ -24,49 +25,120 @@ def _to_int(value: Any, default: int = 0) -> int:
         return default
 
 
+def _timestamp_literal(value: Any) -> str:
+    if isinstance(value, datetime):
+        text = value.strftime("%Y-%m-%d %H:%M:%S.%f")
+    else:
+        text = str(value).strip().replace("T", " ")
+    escaped = text.replace("'", "''")
+    return f"TIMESTAMP '{escaped}'"
+
+
+def _active_scope(repository: TelemetryRepository) -> dict[str, Any] | None:
+    run_row = first_or_none(
+        repository.query(
+            """
+            SELECT run_id, started_at
+            FROM app_runs
+            ORDER BY started_at DESC
+            LIMIT 1
+            """
+        )
+    )
+    if not run_row:
+        return None
+
+    run_id = str(run_row[0])
+    run_started_at = run_row[1]
+    run_started_literal = _timestamp_literal(run_started_at)
+    session_row = first_or_none(
+        repository.query(
+            f"""
+            SELECT session_uid, MAX(timestamp) AS latest_packet_ts
+            FROM raw_packets
+            WHERE timestamp >= {run_started_literal}
+            GROUP BY session_uid
+            ORDER BY latest_packet_ts DESC
+            LIMIT 1
+            """
+        )
+    )
+    if not session_row or session_row[0] is None:
+        return {
+            "run_id": run_id,
+            "run_started_at": str(run_started_at),
+            "run_started_literal": run_started_literal,
+            "session_uid": None,
+        }
+
+    return {
+        "run_id": run_id,
+        "run_started_at": str(run_started_at),
+        "run_started_literal": run_started_literal,
+        "session_uid": int(session_row[0]),
+    }
+
+
 def collect_strategy_snapshot(repository: TelemetryRepository) -> dict[str, Any]:
     """Collect a race-engineering snapshot with trends for strategy decisions."""
+    scope = _active_scope(repository)
+    if scope is None:
+        return {"ready": False, "reason": "missing_app_run"}
+    if scope.get("session_uid") is None:
+        return {"ready": False, "reason": "waiting_for_live_packets", "scope": scope}
+
+    session_uid = int(scope["session_uid"])
+    run_started_literal = str(scope["run_started_literal"])
+    scope_filter = f"session_uid = {session_uid} AND timestamp >= {run_started_literal}"
+
     wear_rows = repository.query(
-        """
+        f"""
         SELECT tyres_wear_fl, tyres_wear_fr, tyres_wear_rl, tyres_wear_rr
-        FROM car_damage WHERE car_index = 0
+        FROM car_damage
+        WHERE {scope_filter} AND car_index = 0
         ORDER BY timestamp DESC LIMIT 20
         """
     )
     status_rows = repository.query(
-        """
+        f"""
         SELECT fuel_in_tank, fuel_remaining_laps, actual_tyre_compound, tyres_age_laps,
                ers_store_energy, ers_deploy_mode, fuel_mix
-        FROM car_status WHERE car_index = 0
+        FROM car_status
+        WHERE {scope_filter} AND car_index = 0
         ORDER BY timestamp DESC LIMIT 20
         """
     )
     lap_rows = repository.query(
-        """
+        f"""
         SELECT last_lap_time_in_ms, car_position, delta_to_car_in_front_in_ms,
                delta_to_race_leader_in_ms, current_lap_num, num_pit_stops
-        FROM lap_data WHERE car_index = 0
+        FROM lap_data
+        WHERE {scope_filter} AND car_index = 0
         ORDER BY timestamp DESC LIMIT 20
         """
     )
     session_rows = repository.query(
-        """
+        f"""
         SELECT weather, track_temperature, air_temperature, rain_percentage,
                pit_stop_window_ideal_lap, pit_stop_window_latest_lap,
                safety_car_status, total_laps, track_id
-        FROM session_data ORDER BY timestamp DESC LIMIT 5
+        FROM session_data
+        WHERE {scope_filter}
+        ORDER BY timestamp DESC LIMIT 5
         """
     )
     event_rows = repository.query(
-        """
+        f"""
         SELECT event_code FROM race_events
+        WHERE {scope_filter}
         ORDER BY timestamp DESC LIMIT 25
         """
     )
     packet_rows = repository.query(
-        """
+        f"""
         SELECT packet_id, packet_name
         FROM raw_packets
+        WHERE {scope_filter}
         ORDER BY timestamp DESC LIMIT 400
         """
     )
@@ -119,7 +191,7 @@ def collect_strategy_snapshot(repository: TelemetryRepository) -> dict[str, Any]
             packet_names_seen.append(packet_name)
 
     if not latest_wear or not latest_status or not latest_lap or not latest_session:
-        return {"ready": False}
+        return {"ready": False, "reason": "incomplete_session_rows", "scope": scope}
 
     fuel_remaining_laps = _to_float(latest_status[1])
     current_lap = _to_int(latest_lap[4], default=1)
@@ -157,6 +229,7 @@ def collect_strategy_snapshot(repository: TelemetryRepository) -> dict[str, Any]
 
     return {
         "ready": True,
+        "scope": scope,
         "stint": {
             "compound_code": _to_int(latest_status[2]),
             "tyre_age_laps": _to_int(latest_status[3]),

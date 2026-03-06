@@ -1,6 +1,7 @@
 import duckdb
 import logging
 import threading
+from uuid import uuid4
 from models.telemetry import TelemetryTick
 from models.telemetry_packets import (
     PacketMotionData,
@@ -31,6 +32,7 @@ class TelemetryStore:
         self.conn = duckdb.connect(self.db_path)
         self._lock = threading.RLock()
         self._init_db()
+        self.run_id = self._start_app_run()
 
         # Buffers for batched inserts
         self._telemetry_buffer = []
@@ -80,6 +82,12 @@ class TelemetryStore:
         from db.telemetry_schema import init_db
 
         init_db(self.conn, self.db_path)
+
+    def _start_app_run(self) -> str:
+        run_id = str(uuid4())
+        self.conn.execute("INSERT INTO app_runs (run_id) VALUES (?)", [run_id])
+        return run_id
+
     # --- Legacy telemetry_tick handler (backward compat) ---
 
     async def _handle_tick(self, tick: TelemetryTick):
@@ -192,13 +200,15 @@ class TelemetryStore:
                 self.conn.execute(
                     """
                     INSERT INTO session_data (
+                        session_uid,
                         weather, track_temperature, air_temperature, total_laps,
                         track_length, session_type, track_id, session_time_left,
                         safety_car_status, rain_percentage,
                         pit_stop_window_ideal_lap, pit_stop_window_latest_lap
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                     [
+                        packet.header.session_uid,
                         packet.weather,
                         packet.track_temperature,
                         packet.air_temperature,
@@ -225,6 +235,7 @@ class TelemetryStore:
         with self._lock:
             self._lap_data_buffer.append(
                 (
+                    packet.header.session_uid,
                     idx,
                     lap.last_lap_time_in_ms,
                     lap.current_lap_time_in_ms,
@@ -255,13 +266,13 @@ class TelemetryStore:
                 self.conn.executemany(
                     """
                     INSERT INTO lap_data (
-                        car_index, last_lap_time_in_ms, current_lap_time_in_ms,
+                        session_uid, car_index, last_lap_time_in_ms, current_lap_time_in_ms,
                         sector1_time_in_ms, sector2_time_in_ms,
                         car_position, current_lap_num, pit_status, num_pit_stops,
                         sector, penalties, driver_status, result_status,
                         delta_to_car_in_front_in_ms, delta_to_race_leader_in_ms,
                         speed_trap_fastest_speed, grid_position
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                     self._lap_data_buffer,
                 )
@@ -278,6 +289,7 @@ class TelemetryStore:
         with self._lock:
             self._car_status_buffer.append(
                 (
+                    packet.header.session_uid,
                     idx,
                     s.fuel_mix,
                     s.fuel_in_tank,
@@ -307,13 +319,13 @@ class TelemetryStore:
                 self.conn.executemany(
                     """
                     INSERT INTO car_status (
-                        car_index, fuel_mix, fuel_in_tank, fuel_remaining_laps,
+                        session_uid, car_index, fuel_mix, fuel_in_tank, fuel_remaining_laps,
                         ers_store_energy, ers_deploy_mode,
                         ers_harvested_this_lap_mguk, ers_harvested_this_lap_mguh,
                         ers_deployed_this_lap, actual_tyre_compound,
                         visual_tyre_compound, tyres_age_laps, drs_allowed,
                         vehicle_fia_flags, engine_power_ice, engine_power_mguk
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                     self._car_status_buffer,
                 )
@@ -330,6 +342,7 @@ class TelemetryStore:
         with self._lock:
             self._car_damage_buffer.append(
                 (
+                    packet.header.session_uid,
                     idx,
                     d.tyres_wear[0],
                     d.tyres_wear[1],
@@ -368,6 +381,7 @@ class TelemetryStore:
                 self.conn.executemany(
                     """
                     INSERT INTO car_damage (
+                        session_uid,
                         car_index,
                         tyres_wear_rl, tyres_wear_rr, tyres_wear_fl, tyres_wear_fr,
                         tyres_damage_rl, tyres_damage_rr, tyres_damage_fl, tyres_damage_fr,
@@ -377,7 +391,7 @@ class TelemetryStore:
                         engine_mguh_wear, engine_es_wear, engine_ce_wear,
                         engine_ice_wear, engine_mguk_wear, engine_tc_wear,
                         drs_fault, ers_fault
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                     self._car_damage_buffer,
                 )
@@ -394,6 +408,7 @@ class TelemetryStore:
         with self._lock:
             self._telemetry_ext_buffer.append(
                 (
+                    packet.header.session_uid,
                     idx,
                     ct.brakes_temperature[0],
                     ct.brakes_temperature[1],
@@ -428,7 +443,7 @@ class TelemetryStore:
                 self.conn.executemany(
                     """
                     INSERT INTO car_telemetry_ext (
-                        car_index,
+                        session_uid, car_index,
                         brakes_temp_rl, brakes_temp_rr, brakes_temp_fl, brakes_temp_fr,
                         tyres_surface_temp_rl, tyres_surface_temp_rr,
                         tyres_surface_temp_fl, tyres_surface_temp_fr,
@@ -438,7 +453,7 @@ class TelemetryStore:
                         tyres_pressure_rl, tyres_pressure_rr,
                         tyres_pressure_fl, tyres_pressure_fr,
                         drs, clutch, suggested_gear
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                     self._telemetry_ext_buffer,
                 )
@@ -464,10 +479,10 @@ class TelemetryStore:
             with self._lock:
                 self.conn.execute(
                     """
-                    INSERT INTO race_events (event_code, vehicle_idx, detail_text)
-                    VALUES (?, ?, ?)
+                    INSERT INTO race_events (session_uid, event_code, vehicle_idx, detail_text)
+                    VALUES (?, ?, ?, ?)
                 """,
-                    [packet.event_string_code, d.vehicle_idx, detail_text],
+                    [packet.header.session_uid, packet.event_string_code, d.vehicle_idx, detail_text],
                 )
         except Exception as e:
             logger.error(f"DuckDB race_events insert error: {e}")
@@ -480,12 +495,14 @@ class TelemetryStore:
                     self.conn.execute(
                         """
                         INSERT INTO session_history (
+                            session_uid,
                             car_index, lap_num, lap_time_in_ms,
                             sector1_time_in_ms, sector2_time_in_ms, sector3_time_in_ms,
                             lap_valid
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                         [
+                            packet.header.session_uid,
                             packet.car_idx,
                             lap_num,
                             lh.lap_time_in_ms,
@@ -514,6 +531,7 @@ class TelemetryStore:
         with self._lock:
             self._motion_buffer.append(
                 (
+                    packet.header.session_uid,
                     idx,
                     m.world_position_x,
                     m.world_position_y,
@@ -537,10 +555,10 @@ class TelemetryStore:
                 self.conn.executemany(
                     """
                     INSERT INTO motion_data (
-                        car_index, world_position_x, world_position_y, world_position_z,
+                        session_uid, car_index, world_position_x, world_position_y, world_position_z,
                         g_force_lateral, g_force_longitudinal, g_force_vertical,
                         yaw, pitch, roll
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                     self._motion_buffer,
                 )
