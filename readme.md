@@ -123,15 +123,18 @@ Temperatures can still be set globally (`LLM_TEMPERATURE`) or per role (`STRATEG
   - voice is now forced to `af_sarah` for consistency across all comms.
   - optional: `VOICE_KOKORO_LANG`, `VOICE_KOKORO_SPEED`, `VOICE_TTS_MAX_CHARS`
   - expressive radio tuning: `VOICE_KOKORO_EXPRESSIVE=true` plus optional per-style speed envs (`VOICE_KOKORO_SPEED_WARNING`, etc.)
-- Optional mic STT is locked to Whisper Turbo via `VOICE_ENABLE_STT=true` and `VOICE_STT_BACKEND=whisper`.
-  - `VOICE_STT_WHISPER_MODEL=turbo` (or a local Turbo model path)
-  - STT runtime is forced to `cpu/int8` for reliability on this project.
+- Optional mic STT now defaults to NVIDIA Parakeet via `VOICE_ENABLE_STT=true` and `VOICE_STT_BACKEND=parakeet`.
+  - required local model path: `VOICE_STT_PARAKEET_MODEL_PATH=...` (`.nemo` checkpoint)
+  - model families currently wired: `parakeet-tdt-0.6b-v3` and `canary-qwen-2.5b`
+  - optional Canary backend: `VOICE_STT_BACKEND=canary` + `VOICE_STT_CANARY_MODEL_PATH=...`
+  - optional shared model path key: `VOICE_STT_MODEL_PATH=...`
+  - STT runtime is forced to `cpu` for reliability on this project.
   - optional explicit input device: `VOICE_STT_MIC_INDEX=<device_index>`.
   - optional detection tuning: `VOICE_STT_DYNAMIC_ENERGY_THRESHOLD=true`, `VOICE_STT_ENERGY_THRESHOLD=300`.
   - PTT immediate capture chunk: `VOICE_STT_PTT_CHUNK_SEC=2.2`.
   - comms control mode: `VOICE_STT_CONTROL_MODE=toggle|ptt|always` (recommended: `toggle` or `ptt`).
   - for toggle mode startup state: `VOICE_STT_TOGGLE_DEFAULT_ON=false`.
-  - optional VAD filter remains configurable (`VOICE_STT_WHISPER_VAD_FILTER=false` recommended for race-radio realism).
+  - legacy fallback remains available: `VOICE_STT_BACKEND=whisper` + local Whisper Turbo model.
   - dashboard includes mic controls: Toggle Mic, Hold-To-Talk, mode selector, microphone selector, and Space-key PTT binding.
   - recognized speech is shown live in comms log as `[YOU] ...` so you can verify STT capture.
   - driver barge-in is enabled: if you speak while TTS is talking, current engineer audio is interrupted and your query is prioritized.

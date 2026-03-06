@@ -1,7 +1,8 @@
 import asyncio
-import ctypes
 import logging
 import os
+import tempfile
+import wave
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -55,29 +56,23 @@ def _looks_like_path(raw: str) -> bool:
     return "\\" in raw or "/" in raw or ":" in raw
 
 
-def _default_torch_device() -> str:
-    try:
-        import torch
-
-        if torch.cuda.is_available():
-            return "cuda"
-    except Exception:
-        pass
-    return "cpu"
+def _normalize_text(raw: str) -> str:
+    text = raw.replace("\n", " ").replace("\r", " ").strip()
+    text = " ".join(text.split())
+    for token in ("<|im_start|>", "<|im_end|>", "<|audioplaceholder|>"):
+        text = text.replace(token, " ")
+    return " ".join(text.split()).strip()
 
 
-def _cuda_runtime_probe() -> tuple[bool, str]:
-    """
-    Lightweight CUDA DLL probe for Windows STT runtime.
-    Faster-Whisper GPU path on Windows needs CUDA 12 runtime DLLs.
-    """
-    if os.name != "nt":
-        return True, ""
-    try:
-        ctypes.WinDLL("cublas64_12.dll")
-    except Exception as exc:
-        return False, f"missing cublas64_12.dll ({exc})"
-    return True, ""
+def _estimate_confidence(text: str) -> float:
+    words = len([w for w in text.split() if w.strip()])
+    if words >= 8:
+        return 0.92
+    if words >= 4:
+        return 0.87
+    if words >= 1:
+        return 0.8
+    return 0.0
 
 
 class AudioInputService:
@@ -85,7 +80,7 @@ class AudioInputService:
 
     def __init__(self):
         self.enabled = _parse_bool(os.getenv("VOICE_ENABLE_STT"), False)
-        self.backend = (os.getenv("VOICE_STT_BACKEND", "whisper") or "").strip().lower()
+        self.backend = (os.getenv("VOICE_STT_BACKEND", "parakeet") or "").strip().lower()
         self.control_mode = (
             os.getenv("VOICE_STT_CONTROL_MODE", "toggle") or "toggle"
         ).strip().lower()
@@ -99,26 +94,36 @@ class AudioInputService:
             os.getenv("VOICE_STT_DYNAMIC_ENERGY_THRESHOLD"), True
         )
         self.energy_threshold = _parse_optional_int(os.getenv("VOICE_STT_ENERGY_THRESHOLD"))
-        self.auto_cpu_fallback = False
 
-        self.whisper_model = (os.getenv("VOICE_STT_WHISPER_MODEL", "turbo") or "turbo").strip()
-        requested_device = (
-            os.getenv("VOICE_STT_WHISPER_DEVICE", _default_torch_device())
-            or _default_torch_device()
-        ).strip()
-        requested_compute_type = (
-            os.getenv(
-                "VOICE_STT_WHISPER_COMPUTE_TYPE",
-                "float16" if requested_device == "cuda" else "int8",
-            )
-            or "int8"
-        ).strip()
-        if requested_device != "cpu" or requested_compute_type != "int8":
+        requested_device = (os.getenv("VOICE_STT_DEVICE", "cpu") or "cpu").strip().lower()
+        if requested_device != "cpu":
             logger.warning(
-                "forcing STT runtime to cpu/int8 (requested device=%s compute_type=%s)",
+                "forcing STT runtime to cpu (requested VOICE_STT_DEVICE=%s)",
                 requested_device,
-                requested_compute_type,
             )
+        self.stt_device = "cpu"
+
+        self.model_path = (os.getenv("VOICE_STT_MODEL_PATH", "") or "").strip()
+        self.parakeet_model_path = (
+            os.getenv("VOICE_STT_PARAKEET_MODEL_PATH", self.model_path)
+            or self.model_path
+            or "models_assets/parakeet-tdt-0.6b-v3.nemo"
+        ).strip()
+        self.canary_model_path = (
+            os.getenv("VOICE_STT_CANARY_MODEL_PATH", self.model_path)
+            or self.model_path
+            or "models_assets/canary-qwen-2.5b.nemo"
+        ).strip()
+        self.canary_prompt = (
+            os.getenv("VOICE_STT_CANARY_PROMPT", "Transcribe the following:")
+            or "Transcribe the following:"
+        ).strip()
+        self.canary_max_new_tokens = max(
+            32, _parse_int(os.getenv("VOICE_STT_CANARY_MAX_NEW_TOKENS"), 112)
+        )
+
+        # Legacy Whisper fallback settings.
+        self.whisper_model = (os.getenv("VOICE_STT_WHISPER_MODEL", "turbo") or "turbo").strip()
         self.whisper_device = "cpu"
         self.whisper_compute_type = "int8"
         self.whisper_beam_size = max(1, _parse_int(os.getenv("VOICE_STT_WHISPER_BEAM_SIZE"), 1))
@@ -129,9 +134,9 @@ class AudioInputService:
         self._sr: Any = None
         self._recognizer: Any = None
         self._microphone: Any = None
+        self._backend_model: Any = None
         self._whisper_model: Any = None
-        self._whisper_model_cls: Any = None
-        self._whisper_model_ref: str = "turbo"
+        self._engine_name = "none"
         self._ambient_calibrated = False
         self._mic_name = "default"
         self._last_error: str | None = None
@@ -153,12 +158,18 @@ class AudioInputService:
             logger.info("audio input disabled (VOICE_ENABLE_STT=false)")
             return
 
+        if self.backend == "parakeet":
+            self._setup_parakeet()
+            return
+        if self.backend == "canary":
+            self._setup_canary()
+            return
         if self.backend == "whisper":
             self._setup_whisper()
             return
 
         logger.warning(
-            "unsupported VOICE_STT_BACKEND=%s; only 'whisper' is allowed, STT disabled",
+            "unsupported VOICE_STT_BACKEND=%s; supported values are parakeet|canary|whisper, STT disabled",
             self.backend,
         )
 
@@ -217,6 +228,8 @@ class AudioInputService:
             "enabled": self.enabled,
             "available": self._available,
             "backend": self.backend,
+            "engine": self._engine_name,
+            "device": self.stt_device,
             "whisper_device": self.whisper_device,
             "whisper_compute_type": self.whisper_compute_type,
             "mic_index": self.mic_index,
@@ -267,6 +280,119 @@ class AudioInputService:
             self._transcribe_error_count = 0
         return self.get_control_status()
 
+    def _setup_capture_runtime(self) -> bool:
+        try:
+            import speech_recognition as sr  # type: ignore
+
+            self._sr = sr
+            self._recognizer = sr.Recognizer()
+            self._recognizer.dynamic_energy_threshold = self.dynamic_energy_threshold
+            if self.energy_threshold is not None:
+                self._recognizer.energy_threshold = max(10, self.energy_threshold)
+            self._build_microphone()
+            return self._microphone is not None
+        except Exception as exc:
+            self._last_error = f"speech capture runtime init failed: {exc}"
+            logger.warning("%s", self._last_error)
+            return False
+
+    def _validate_local_model(self, value: str, *, env_key: str) -> str | None:
+        cleaned = (value or "").strip()
+        if not cleaned:
+            logger.warning("%s must be set to a local model path.", env_key)
+            return None
+        if _is_remote_resource(cleaned):
+            logger.warning("%s is local-only; remote model URIs are not allowed.", env_key)
+            return None
+        if not os.path.exists(cleaned):
+            logger.warning("model path not found for %s: %s", env_key, cleaned)
+            return None
+        return cleaned
+
+    def _setup_parakeet(self) -> None:
+        model_path = self._validate_local_model(
+            self.parakeet_model_path,
+            env_key="VOICE_STT_PARAKEET_MODEL_PATH",
+        )
+        if not model_path:
+            return
+        if not self._setup_capture_runtime():
+            return
+
+        try:
+            import nemo.collections.asr as nemo_asr  # type: ignore
+
+            try:
+                self._backend_model = nemo_asr.models.ASRModel.restore_from(
+                    restore_path=model_path,
+                    map_location=self.stt_device,
+                )
+            except TypeError:
+                self._backend_model = nemo_asr.models.ASRModel.restore_from(
+                    restore_path=model_path,
+                )
+            self._engine_name = "parakeet"
+            self._available = self._backend_model is not None
+            logger.info(
+                "parakeet STT backend enabled (model=%s, device=%s, mic=%s, dynamic_energy=%s, energy=%s)",
+                model_path,
+                self.stt_device,
+                self._mic_name,
+                self.dynamic_energy_threshold,
+                self._recognizer.energy_threshold if self._recognizer else "n/a",
+            )
+        except Exception as exc:
+            self._last_error = f"parakeet init failed: {exc}"
+            logger.warning(
+                "parakeet STT initialization failed: %s (install NeMo ASR runtime and provide a local .nemo model).",
+                exc,
+            )
+            self._available = False
+
+    def _setup_canary(self) -> None:
+        model_path = self._validate_local_model(
+            self.canary_model_path,
+            env_key="VOICE_STT_CANARY_MODEL_PATH",
+        )
+        if not model_path:
+            return
+        if not self._setup_capture_runtime():
+            return
+
+        try:
+            from nemo.collections.speechlm2.models import SALM  # type: ignore
+
+            if hasattr(SALM, "restore_from"):
+                try:
+                    self._backend_model = SALM.restore_from(
+                        restore_path=model_path,
+                        map_location=self.stt_device,
+                    )
+                except TypeError:
+                    self._backend_model = SALM.restore_from(restore_path=model_path)
+            elif hasattr(SALM, "from_pretrained"):
+                self._backend_model = SALM.from_pretrained(model_path)
+            else:
+                raise RuntimeError("SALM model loader not available.")
+
+            self._engine_name = "canary"
+            self._available = self._backend_model is not None
+            logger.info(
+                "canary STT backend enabled (model=%s, device=%s, mic=%s, dynamic_energy=%s, energy=%s)",
+                model_path,
+                self.stt_device,
+                self._mic_name,
+                self.dynamic_energy_threshold,
+                self._recognizer.energy_threshold if self._recognizer else "n/a",
+            )
+        except Exception as exc:
+            self._last_error = f"canary init failed: {exc}"
+            logger.warning(
+                "canary STT initialization failed: %s (install NeMo SpeechLM runtime and provide a local .nemo model).",
+                exc,
+            )
+            self._available = False
+
     def _setup_whisper(self) -> None:
         model_value = self.whisper_model
         if not model_value:
@@ -280,7 +406,7 @@ class AudioInputService:
             if not os.path.exists(model_value):
                 logger.warning("whisper model path not found: %s", model_value)
                 return
-            self._whisper_model_ref = model_value
+            whisper_ref = model_value
         else:
             model_key = model_value.lower()
             if model_key not in {"turbo", "large-v3-turbo"}:
@@ -289,95 +415,39 @@ class AudioInputService:
                     model_value,
                 )
                 return
-            self._whisper_model_ref = "turbo"
+            whisper_ref = "turbo"
+
+        if not self._setup_capture_runtime():
+            return
 
         try:
-            import speech_recognition as sr  # type: ignore
             from faster_whisper import WhisperModel  # type: ignore
 
-            self._sr = sr
-            self._whisper_model_cls = WhisperModel
-            self._recognizer = sr.Recognizer()
-            self._recognizer.dynamic_energy_threshold = self.dynamic_energy_threshold
-            if self.energy_threshold is not None:
-                self._recognizer.energy_threshold = max(10, self.energy_threshold)
-            self._build_microphone()
-
-            if self.whisper_device == "cuda":
-                cuda_ok, cuda_reason = _cuda_runtime_probe()
-                if not cuda_ok:
-                    if self.auto_cpu_fallback:
-                        logger.warning(
-                            "cuda runtime unavailable for STT (%s); starting on cpu/int8.",
-                            cuda_reason,
-                        )
-                        self.whisper_device = "cpu"
-                        self.whisper_compute_type = "int8"
-                        self._cpu_fallback_activated = True
-                    else:
-                        logger.warning(
-                            "cuda runtime unavailable for STT (%s); STT may fail without fallback.",
-                            cuda_reason,
-                        )
-
-            if not self._initialize_whisper_model():
-                self._available = False
-                return
-
+            self._whisper_model = WhisperModel(
+                model_size_or_path=whisper_ref,
+                device=self.whisper_device,
+                compute_type=self.whisper_compute_type,
+                local_files_only=True,
+            )
+            self._backend_model = self._whisper_model
+            self._engine_name = "whisper"
             self._available = self._whisper_model is not None
             logger.info(
                 (
-                    "whisper turbo STT backend enabled "
-                    "(model=%s, device=%s, compute_type=%s, mic=%s, dynamic_energy=%s, energy=%s, auto_cpu_fallback=%s)"
+                    "whisper legacy STT backend enabled "
+                    "(model=%s, device=%s, compute_type=%s, mic=%s, dynamic_energy=%s, energy=%s)"
                 ),
-                self._whisper_model_ref,
+                whisper_ref,
                 self.whisper_device,
                 self.whisper_compute_type,
                 self._mic_name,
                 self.dynamic_energy_threshold,
                 self._recognizer.energy_threshold if self._recognizer else "n/a",
-                self.auto_cpu_fallback,
             )
         except Exception as exc:
+            self._last_error = f"whisper init failed: {exc}"
             logger.warning("whisper STT initialization failed: %s", exc)
             self._available = False
-
-    def _initialize_whisper_model(self) -> bool:
-        if self._whisper_model_cls is None:
-            self._last_error = "whisper model class unavailable"
-            return False
-        try:
-            self._whisper_model = self._whisper_model_cls(
-                model_size_or_path=self._whisper_model_ref,
-                device=self.whisper_device,
-                compute_type=self.whisper_compute_type,
-                local_files_only=True,
-            )
-            return True
-        except Exception as exc:
-            self._last_error = f"whisper model init failed: {exc}"
-            logger.warning("whisper model init failed (%s/%s): %s", self.whisper_device, self.whisper_compute_type, exc)
-            self._whisper_model = None
-            return False
-
-    def _activate_cpu_fallback(self) -> bool:
-        if not self.auto_cpu_fallback or self._cpu_fallback_activated:
-            return False
-        if self.whisper_device != "cuda":
-            return False
-        logger.warning(
-            "stt cuda path unstable; attempting fallback to cpu/int8 for reliability."
-        )
-        self.whisper_device = "cpu"
-        self.whisper_compute_type = "int8"
-        self._cpu_fallback_activated = True
-        ok = self._initialize_whisper_model()
-        if ok:
-            logger.warning("stt cpu fallback activated successfully.")
-            return True
-        logger.error("stt cpu fallback failed; STT remains unavailable.")
-        self._available = False
-        return False
 
     async def run(
         self,
@@ -421,7 +491,6 @@ class AudioInputService:
                     )
                     self._ambient_calibrated = True
                 if self.control_mode == "ptt":
-                    # PTT should capture immediately without waiting for voice trigger.
                     chunk_sec = max(0.35, min(self.ptt_chunk_sec, max(0.35, self.phrase_limit_sec)))
                     audio = self._recognizer.record(source, duration=chunk_sec)
                 else:
@@ -433,7 +502,8 @@ class AudioInputService:
 
             if self.backend == "whisper":
                 return self._transcribe_with_whisper(audio)
-
+            if self.backend in {"parakeet", "canary"}:
+                return self._transcribe_with_nemo(audio)
             return None
         except self._sr.WaitTimeoutError:
             return None
@@ -448,6 +518,112 @@ class AudioInputService:
                 logger.debug("stt capture error: %s", exc)
             return None
 
+    @staticmethod
+    def _audio_to_wav_file(audio: Any) -> str | None:
+        try:
+            raw_pcm = audio.get_raw_data(convert_rate=16000, convert_width=2)
+            if not raw_pcm:
+                return None
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as temp_wav:
+                wav_path = temp_wav.name
+            with wave.open(wav_path, "wb") as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(2)
+                wf.setframerate(16000)
+                wf.writeframes(raw_pcm)
+            return wav_path
+        except Exception:
+            return None
+
+    @staticmethod
+    def _extract_text_from_output(result: Any) -> str:
+        if result is None:
+            return ""
+        if isinstance(result, str):
+            return _normalize_text(result)
+        if isinstance(result, dict):
+            for key in ("text", "pred_text", "transcript", "answer", "generated_text"):
+                value = result.get(key)
+                if isinstance(value, str) and value.strip():
+                    return _normalize_text(value)
+            return ""
+        text_attr = getattr(result, "text", None)
+        if isinstance(text_attr, str) and text_attr.strip():
+            return _normalize_text(text_attr)
+        if isinstance(result, (list, tuple)):
+            parts = [AudioInputService._extract_text_from_output(item) for item in result]
+            return _normalize_text(" ".join(part for part in parts if part))
+        return ""
+
+    def _transcribe_with_nemo(self, audio: Any) -> tuple[str, float] | None:
+        if self._backend_model is None:
+            return None
+        wav_path = self._audio_to_wav_file(audio)
+        if not wav_path:
+            return None
+        try:
+            text = ""
+            if self.backend == "canary":
+                text = self._transcribe_with_canary_generate(wav_path)
+            if not text and hasattr(self._backend_model, "transcribe"):
+                result = self._backend_model.transcribe([wav_path])
+                text = self._extract_text_from_output(result)
+            text = _normalize_text(text)
+            if not text:
+                return None
+            self._last_error = None
+            self._transcribe_error_count = 0
+            return text, _estimate_confidence(text)
+        except Exception as exc:
+            self._transcribe_error_count += 1
+            self._last_error = f"{self.backend} transcription error: {exc}"
+            if self._transcribe_error_count <= 2 or self._transcribe_error_count % 5 == 0:
+                logger.warning(
+                    "%s transcription error (%d): %s",
+                    self.backend,
+                    self._transcribe_error_count,
+                    exc,
+                )
+            else:
+                logger.debug("%s transcription error: %s", self.backend, exc)
+            return None
+        finally:
+            try:
+                os.remove(wav_path)
+            except Exception:
+                pass
+
+    def _transcribe_with_canary_generate(self, wav_path: str) -> str:
+        if not hasattr(self._backend_model, "generate"):
+            return ""
+        audio_tag = getattr(self._backend_model, "audio_locator_tag", "<|audioplaceholder|>")
+        content = f"{self.canary_prompt} {audio_tag}".strip()
+        prompts = [[{"role": "user", "content": content, "audio": [wav_path]}]]
+        result = self._backend_model.generate(
+            prompts=prompts,
+            max_new_tokens=self.canary_max_new_tokens,
+        )
+        tokenizer = getattr(self._backend_model, "tokenizer", None)
+        if tokenizer is not None:
+            first = result[0] if isinstance(result, (list, tuple)) and result else result
+            if hasattr(first, "cpu"):
+                first = first.cpu()
+            if hasattr(tokenizer, "ids_to_text"):
+                try:
+                    decoded = tokenizer.ids_to_text(first)
+                    if isinstance(decoded, str):
+                        return _normalize_text(decoded)
+                except Exception:
+                    pass
+            if hasattr(tokenizer, "decode"):
+                try:
+                    decoded = tokenizer.decode(first)
+                    if isinstance(decoded, str):
+                        return _normalize_text(decoded)
+                except Exception:
+                    pass
+        return self._extract_text_from_output(result)
+
     def _transcribe_with_whisper(self, audio: Any) -> tuple[str, float] | None:
         if self._whisper_model is None:
             return None
@@ -455,7 +631,6 @@ class AudioInputService:
         try:
             import numpy as np
 
-            # Fast path: avoid disk I/O by decoding microphone PCM in memory.
             raw_pcm = audio.get_raw_data(convert_rate=16000, convert_width=2)
             pcm = np.frombuffer(raw_pcm, dtype=np.int16).astype("float32") / 32768.0
 
@@ -497,11 +672,9 @@ class AudioInputService:
                 )
             else:
                 logger.debug("whisper transcription error: %s", exc)
-
-            if self._activate_cpu_fallback():
-                self._last_error = "switched to cpu/int8 fallback after cuda transcription failures"
             return None
 
     def stop(self) -> None:
         self._running = False
+        self._backend_model = None
         self._whisper_model = None

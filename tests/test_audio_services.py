@@ -17,6 +17,23 @@ def test_audio_input_disabled_by_default(monkeypatch):
     assert not service.available
 
 
+def test_audio_input_parakeet_disabled_without_local_model(monkeypatch):
+    monkeypatch.setenv("VOICE_ENABLE_STT", "true")
+    monkeypatch.setenv("VOICE_STT_BACKEND", "parakeet")
+    monkeypatch.setenv("VOICE_STT_PARAKEET_MODEL_PATH", "")
+    monkeypatch.setenv("VOICE_STT_MODEL_PATH", "")
+    service = AudioInputService()
+    assert not service.available
+
+
+def test_audio_input_parakeet_rejects_remote_model_source(monkeypatch):
+    monkeypatch.setenv("VOICE_ENABLE_STT", "true")
+    monkeypatch.setenv("VOICE_STT_BACKEND", "parakeet")
+    monkeypatch.setenv("VOICE_STT_PARAKEET_MODEL_PATH", "hf://nvidia/parakeet-tdt-0.6b-v3")
+    service = AudioInputService()
+    assert not service.available
+
+
 def test_audio_input_whisper_disabled_without_turbo_model(monkeypatch):
     monkeypatch.setenv("VOICE_ENABLE_STT", "true")
     monkeypatch.setenv("VOICE_STT_BACKEND", "whisper")
@@ -35,13 +52,13 @@ def test_audio_input_whisper_rejects_remote_model_source(monkeypatch):
 
 def test_audio_input_unsupported_backend_is_disabled(monkeypatch):
     monkeypatch.setenv("VOICE_ENABLE_STT", "true")
-    monkeypatch.setenv("VOICE_STT_BACKEND", "parakeet")
+    monkeypatch.setenv("VOICE_STT_BACKEND", "legacy_backend")
     service = AudioInputService()
     assert not service.available
 
 
 def test_audio_input_control_toggle_default_off(monkeypatch):
-    monkeypatch.setenv("VOICE_STT_BACKEND", "whisper")
+    monkeypatch.setenv("VOICE_STT_BACKEND", "parakeet")
     monkeypatch.setenv("VOICE_STT_CONTROL_MODE", "toggle")
     monkeypatch.setenv("VOICE_STT_TOGGLE_DEFAULT_ON", "false")
     service = AudioInputService()
@@ -53,7 +70,7 @@ def test_audio_input_control_toggle_default_off(monkeypatch):
 
 
 def test_audio_input_control_toggle_action(monkeypatch):
-    monkeypatch.setenv("VOICE_STT_BACKEND", "whisper")
+    monkeypatch.setenv("VOICE_STT_BACKEND", "parakeet")
     monkeypatch.setenv("VOICE_STT_CONTROL_MODE", "toggle")
     monkeypatch.setenv("VOICE_STT_TOGGLE_DEFAULT_ON", "false")
     service = AudioInputService()
@@ -62,7 +79,7 @@ def test_audio_input_control_toggle_action(monkeypatch):
 
 
 def test_audio_input_control_ptt_actions(monkeypatch):
-    monkeypatch.setenv("VOICE_STT_BACKEND", "whisper")
+    monkeypatch.setenv("VOICE_STT_BACKEND", "parakeet")
     monkeypatch.setenv("VOICE_STT_CONTROL_MODE", "ptt")
     service = AudioInputService()
     status_down = service.apply_control_action(action="ptt_down")
@@ -72,17 +89,17 @@ def test_audio_input_control_ptt_actions(monkeypatch):
 
 
 def test_audio_input_control_set_mic(monkeypatch):
-    monkeypatch.setenv("VOICE_STT_BACKEND", "whisper")
+    monkeypatch.setenv("VOICE_STT_BACKEND", "parakeet")
     service = AudioInputService()
     status = service.apply_control_action(action="set_mic", mic_index=2)
     assert status["mic_index"] == 2
 
 
 def test_audio_input_forces_cpu_runtime(monkeypatch):
-    monkeypatch.setenv("VOICE_STT_BACKEND", "whisper")
-    monkeypatch.setenv("VOICE_STT_WHISPER_DEVICE", "cuda")
-    monkeypatch.setenv("VOICE_STT_WHISPER_COMPUTE_TYPE", "float16")
+    monkeypatch.setenv("VOICE_STT_BACKEND", "parakeet")
+    monkeypatch.setenv("VOICE_STT_DEVICE", "cuda")
     service = AudioInputService()
+    assert service.stt_device == "cpu"
     assert service.whisper_device == "cpu"
     assert service.whisper_compute_type == "int8"
 
