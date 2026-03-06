@@ -6,6 +6,8 @@ from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel
 
+from services.llm_profile_service import resolve_llm_profile
+
 logger = logging.getLogger(__name__)
 
 
@@ -15,16 +17,31 @@ class ChatClient:
     def __init__(
         self,
         *,
+        role: str | None = None,
         provider: str | None = None,
         model: str | None = None,
         temperature: float = 0.2,
     ):
-        self.provider = provider or os.getenv("LLM_PROVIDER")
-        self.model = model or os.getenv("LLM_MODEL")
-        self.temperature = temperature
+        self.role = role
+        if role and provider is None and model is None:
+            profile = resolve_llm_profile(role=role, default_temperature=temperature)
+            self.provider = profile.provider
+            self.model = profile.model
+            self.temperature = profile.temperature
+            self.source = profile.source
+        else:
+            self.provider = provider or os.getenv("LLM_PROVIDER")
+            self.model = model or os.getenv("LLM_MODEL")
+            self.temperature = temperature
+            self.source = "explicit_or_global"
         self._model: Any = None
 
         if not self.provider or not self.model:
+            logger.info(
+                "llm client unavailable for role=%s (provider/model unset, source=%s)",
+                self.role or "default",
+                self.source,
+            )
             return
 
         try:
@@ -32,6 +49,13 @@ class ChatClient:
                 self.model,
                 model_provider=self.provider,
                 temperature=self.temperature,
+            )
+            logger.info(
+                "llm client ready for role=%s provider=%s model=%s source=%s",
+                self.role or "default",
+                self.provider,
+                self.model,
+                self.source,
             )
         except Exception as exc:
             logger.warning("failed to initialize chat model: %s", exc)

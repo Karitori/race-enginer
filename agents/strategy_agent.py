@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import os
 import time
 from typing import Any
 
@@ -41,9 +40,7 @@ class StrategyAgent:
         self._last_signature: str | None = None
         self._last_publish_monotonic = 0.0
 
-        provider = os.getenv("STRATEGY_PROVIDER") or os.getenv("LLM_PROVIDER")
-        model = os.getenv("STRATEGY_MODEL") or os.getenv("LLM_MODEL")
-        self._client = ChatClient(provider=provider, model=model, temperature=0.15)
+        self._client = ChatClient(role="strategy", temperature=0.15)
         self._llm_runner = self._build_llm_runner()
 
         graph = StateGraph(StrategyState)

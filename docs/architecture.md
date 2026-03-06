@@ -9,6 +9,10 @@ The Race Engineer system is an intelligent assistant designed to act as an autom
 - **Responsibility:** Single home for all Pydantic data contracts (telemetry packets, API payloads, strategy/insight schemas).
 - **Purpose:** Keeps schema evolution centralized and avoids model duplication across `routes`, `services`, and `db`.
 
+### LLM Profiles (`services/llm_profile_service.py`)
+- **Responsibility:** Resolve role-based provider/model/temperature selection with global fallback and optional presets.
+- **Purpose:** Enables low-cost/high-quality tradeoff tuning per role (`strategy`, `advisor`, `voice`) without code changes.
+
 ### Track Strategy Profiles (`utils/track_strategy_profiles.py`)
 - **Responsibility:** Encodes circuit-specific strategic tendencies (overtake difficulty, pit-loss profile, undercut bias, weather volatility).
 - **Purpose:** Prevents one-size-fits-all race calls by adapting strategy/racecraft decisions to each track.
@@ -37,6 +41,7 @@ The Race Engineer system is an intelligent assistant designed to act as an autom
 
 ### 5. Voice Engine (`voice_engine`)
 - **Responsibility:** Handle bidirectional verbal communication with the driver via STT (Speech-to-Text) and TTS (Text-to-Speech).
+- **Supporting modules:** `services/audio_output_service.py` (TTS backend abstraction), `services/audio_input_service.py` (optional microphone capture), `services/voice_service.py` (queueing, prioritization, and structured summary decisions).
 
 ### 6. Web Dashboard (`services/app_service.py` + `routes/`)
 - **Responsibility:** Real-time visual representation of telemetry and the Engineer's comms via FastAPI and WebSockets, with route handlers split into `routes/api_routes.py`, `routes/websocket_routes.py`, and `routes/dashboard_routes.py`.

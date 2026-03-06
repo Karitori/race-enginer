@@ -50,6 +50,7 @@ async def main():
         logger.info("Shutting down Race Engineer...")
         strategy_agent.stop()
         strategy_task.cancel()
+        voice_assistant.stop()
         parser_manager.stop()
         repository.close()
 

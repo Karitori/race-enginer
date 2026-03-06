@@ -1,4 +1,3 @@
-import os
 import logging
 from typing import Optional
 
@@ -25,9 +24,7 @@ class RaceEngineerService:
     """
 
     def __init__(self):
-        provider = os.getenv("ADVISOR_PROVIDER") or os.getenv("LLM_PROVIDER")
-        model = os.getenv("ADVISOR_MODEL") or os.getenv("LLM_MODEL")
-        self.client = ChatClient(provider=provider, model=model, temperature=0.3)
+        self.client = ChatClient(role="advisor", temperature=0.3)
 
         # State tracking (legacy)
         self.latest_telemetry: Optional[TelemetryTick] = None
@@ -90,7 +87,7 @@ class RaceEngineerService:
         )
 
     async def _handle_query(self, query: DriverQuery):
-        """When the driver asks a question, consult Gemini using full race context."""
+        """When the driver asks a question, consult configured LLM using full context."""
         logger.info(f"LLM Advisor received query: '{query.query}'")
 
         if not self.latest_telemetry:

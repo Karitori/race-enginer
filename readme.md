@@ -38,7 +38,7 @@ This project is now `uv` managed.
 - Python 3.10+
 - `uv`
 - Optional: microphone/speakers for voice output
-- LLM env vars in `.env` for advisor/voice (example: `LLM_PROVIDER=google_genai`, `LLM_MODEL=gemini-2.5-flash`)
+- LLM provider package credentials in `.env` (for your selected LangChain provider)
 
 ## Setup
 
@@ -65,4 +65,24 @@ uv run python main.py
   - Preferred: set `F1_25_PARSER_PATH` in `.env` to the absolute parser file path.
   - Alternative: keep `f1-25-telemetry-application` adjacent to this repo.
 - Set `TELEMETRY_FALLBACK_TO_MOCK=true` only if you want automatic fallback when real parser boot fails.
+
+## LLM Choice
+
+The app now resolves models by role with fallback:
+- `STRATEGY_PROVIDER` / `STRATEGY_MODEL`
+- `ADVISOR_PROVIDER` / `ADVISOR_MODEL`
+- `VOICE_PROVIDER` / `VOICE_MODEL`
+- fallback to global `LLM_PROVIDER` / `LLM_MODEL`
+- optional presets via `LLM_PROFILE`:
+  - `groq-cheap` (`openai/gpt-oss-20b`)
+  - `groq-quality` (`openai/gpt-oss-120b` for strategy/advisor)
+  - `local-oss` (Ollama local models)
+
+Temperatures can be set globally (`LLM_TEMPERATURE`) or per role (`STRATEGY_TEMPERATURE`, etc.).
+
+## Voice & Audio
+
+- TTS output uses `VOICE_TTS_BACKEND` (`pyttsx3` or `none`), with `VOICE_ENABLE_TTS=true|false`.
+- Optional mic STT is supported via `VOICE_ENABLE_STT=true` and `VOICE_STT_BACKEND=speech_recognition`.
+- Voice queue summarization now uses structured LLM output instead of manual JSON parsing.
 
