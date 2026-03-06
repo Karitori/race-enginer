@@ -61,6 +61,10 @@ class PerformanceAnalyzer:
         self._pit_window_notified = False
         self._last_position = 0
         self._overtake_lap = 0
+        self._latest_lap_packet: PacketLapData | None = None
+        self._latest_status_packet: PacketCarStatusData | None = None
+        self._last_drs_allowed = 0
+        self._drs_enable_notified_lap = 0
 
         # Cooldown timers (prevents flooding from 20Hz handlers)
         self._braking_in_zone = False  # True while brake > 0.5, resets on release
@@ -74,6 +78,101 @@ class PerformanceAnalyzer:
         self._lockup_warning_cooldown_sec = _parse_float(
             os.getenv("FEEDBACK_LOCKUP_COOLDOWN_SEC"), 24.0
         )
+        self._last_attack_call_time = 0.0
+        self._last_attack_signature: str | None = None
+        self._last_drs_enable_call_time = 0.0
+        self._attack_call_cooldown_sec = _parse_float(
+            os.getenv("FEEDBACK_ATTACK_CALL_COOLDOWN_SEC"), 12.0
+        )
+        self._drs_call_cooldown_sec = _parse_float(
+            os.getenv("FEEDBACK_DRS_CALL_COOLDOWN_SEC"), 10.0
+        )
+
+    @staticmethod
+    def _gap_seconds(delta_ms: int | None) -> float | None:
+        if delta_ms is None:
+            return None
+        try:
+            value = int(delta_ms)
+        except (TypeError, ValueError):
+            return None
+        if value <= 0:
+            return None
+        return value / 1000.0
+
+    async def _maybe_publish_attack_call(self) -> None:
+        if self._latest_lap_packet is None or self._latest_status_packet is None:
+            return
+
+        lap_idx = self._latest_lap_packet.header.player_car_index
+        status_idx = self._latest_status_packet.header.player_car_index
+        if lap_idx != status_idx:
+            return
+        if lap_idx >= len(self._latest_lap_packet.car_lap_data):
+            return
+        if lap_idx >= len(self._latest_status_packet.car_status_data):
+            return
+
+        lap = self._latest_lap_packet.car_lap_data[lap_idx]
+        status = self._latest_status_packet.car_status_data[lap_idx]
+        if lap.car_position <= 1:
+            return
+        if lap.pit_status != 0:
+            return
+
+        gap_front_s = self._gap_seconds(lap.delta_to_car_in_front_in_ms)
+        if gap_front_s is None:
+            return
+
+        now = time.monotonic()
+        ers_pct = max(0.0, min(100.0, (status.ers_store_energy / 4000000.0) * 100.0))
+
+        if int(status.drs_allowed) == 1 and gap_front_s <= 0.9:
+            if now - self._last_attack_call_time < self._drs_call_cooldown_sec:
+                return
+            gap_bucket = int(gap_front_s * 10)
+            signature = f"drs_attack|lap{lap.current_lap_num}|g{gap_bucket}"
+            if signature == self._last_attack_signature:
+                return
+            message = (
+                f"DRS is available. Gap {gap_front_s:.1f} seconds. Use overtake now."
+                if ers_pct >= 20.0
+                else (
+                    f"DRS is available. Gap {gap_front_s:.1f} seconds. Attack, but manage ERS this straight."
+                )
+            )
+            self._last_attack_call_time = now
+            self._last_attack_signature = signature
+            await bus.publish(
+                "driving_insight",
+                DrivingInsight(
+                    message=message,
+                    type="strategy",
+                    priority=4,
+                ),
+            )
+            return
+
+        if int(status.drs_allowed) == 0 and gap_front_s <= 0.6:
+            if now - self._last_attack_call_time < self._attack_call_cooldown_sec:
+                return
+            gap_bucket = int(gap_front_s * 10)
+            signature = f"setup_drs|lap{lap.current_lap_num}|g{gap_bucket}"
+            if signature == self._last_attack_signature:
+                return
+            self._last_attack_call_time = now
+            self._last_attack_signature = signature
+            await bus.publish(
+                "driving_insight",
+                DrivingInsight(
+                    message=(
+                        f"Gap to the car ahead is {gap_front_s:.1f} seconds. "
+                        "Stay in slipstream and prep DRS for the next zone."
+                    ),
+                    type="strategy",
+                    priority=3,
+                ),
+            )
 
     async def _handle_telemetry_tick(self, data: TelemetryTick):
         """Legacy handler - lap detection, braking, tire wear."""
@@ -153,6 +252,7 @@ class PerformanceAnalyzer:
         if now - self._last_car_status_time < 1.0:
             return
         self._last_car_status_time = now
+        self._latest_status_packet = packet
 
         idx = packet.header.player_car_index
         if idx >= len(packet.car_status_data):
@@ -195,6 +295,28 @@ class PerformanceAnalyzer:
             )
         elif ers_pct > 30:
             self._ers_low_warned = False
+
+        drs_allowed_now = int(s.drs_allowed)
+        if drs_allowed_now == 1 and self._last_drs_allowed == 0:
+            lap_num = self.last_lap
+            if self._latest_lap_packet is not None and idx < len(self._latest_lap_packet.car_lap_data):
+                lap_num = self._latest_lap_packet.car_lap_data[idx].current_lap_num
+            if (
+                lap_num != self._drs_enable_notified_lap
+                and (now - self._last_drs_enable_call_time) >= self._drs_call_cooldown_sec
+            ):
+                self._drs_enable_notified_lap = lap_num
+                self._last_drs_enable_call_time = now
+                await bus.publish(
+                    "driving_insight",
+                    DrivingInsight(
+                        message="DRS enabled. Prioritize clean exit and deploy on the straight.",
+                        type="strategy",
+                        priority=4,
+                    ),
+                )
+        self._last_drs_allowed = drs_allowed_now
+        await self._maybe_publish_attack_call()
 
     async def _handle_car_damage(self, packet: PacketCarDamageData):
         """Damage critical alerts."""
@@ -302,6 +424,7 @@ class PerformanceAnalyzer:
         if now - self._last_position_check_time < 1.0:
             return
         self._last_position_check_time = now
+        self._latest_lap_packet = packet
 
         idx = packet.header.player_car_index
         if idx >= len(packet.car_lap_data):
@@ -332,6 +455,7 @@ class PerformanceAnalyzer:
                     ),
                 )
         self._last_position = lap.car_position
+        await self._maybe_publish_attack_call()
 
     async def _handle_car_telemetry(self, packet: PacketCarTelemetryData):
         """Tire and brake temperature warnings. Rate-limited to 0.5Hz."""
