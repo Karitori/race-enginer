@@ -44,6 +44,11 @@ def _prepare_tts_text(text: str, max_chars: int) -> str:
     cleaned = (text or "").replace("\r", " ").replace("\n", " ")
     cleaned = re.sub(r"[`*_#~\[\]{}<>|]", " ", cleaned)
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    # Normalize numeric tokens for clearer speech synthesis.
+    cleaned = re.sub(r"(?<=\d),(?=\d)", "", cleaned)  # 1,200 -> 1200
+    cleaned = re.sub(r"(?<!\d)\.(\d)", r"0.\1", cleaned)  # .6 -> 0.6
+    cleaned = re.sub(r"(\d)([A-Za-z])", r"\1 \2", cleaned)  # 910C -> 910 C
+    cleaned = re.sub(r"([A-Za-z])(\d)", r"\1 \2", cleaned)  # P9 -> P 9
     cleaned = re.sub(r"[^A-Za-z0-9 .,!?;:'%/+-]", " ", cleaned)
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
     if len(cleaned) <= max_chars:

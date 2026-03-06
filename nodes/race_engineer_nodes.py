@@ -79,6 +79,19 @@ _FULL_SNAPSHOT_MARKERS = (
     "full telemetry",
     "full snapshot",
 )
+_SOCIAL_MARKERS = (
+    "how are you",
+    "how's it going",
+    "tell me about yourself",
+    "tell me more about yourself",
+    "who are you",
+    "radio check",
+    "hello",
+    "hey",
+    "yo",
+    "drinks",
+    "joke",
+)
 
 _PLAN_SYSTEM_PROMPT = (
     "You classify race-radio driver requests. "
@@ -131,14 +144,20 @@ def _heuristic_tool_name(query: str) -> str:
     lowered = (query or "").strip().lower()
     if not lowered:
         return "none"
-    if any(marker in lowered for marker in _GAP_MARKERS):
+    has_gap = any(marker in lowered for marker in _GAP_MARKERS)
+    has_car_state = any(marker in lowered for marker in _CAR_STATE_MARKERS)
+    has_health = any(marker in lowered for marker in _HEALTH_MARKERS)
+    has_full = any(marker in lowered for marker in _FULL_SNAPSHOT_MARKERS)
+    if has_gap:
         return "telemetry_gap"
-    if any(marker in lowered for marker in _CAR_STATE_MARKERS):
+    if has_car_state:
         return "telemetry_car_state"
-    if any(marker in lowered for marker in _HEALTH_MARKERS):
+    if has_health:
         return "telemetry_health"
-    if any(marker in lowered for marker in _FULL_SNAPSHOT_MARKERS):
+    if has_full:
         return "telemetry_full_snapshot"
+    if any(marker in lowered for marker in _SOCIAL_MARKERS):
+        return "none"
     return "none"
 
 
@@ -173,211 +192,6 @@ def _coerce_tool_content(content: Any) -> dict[str, Any]:
         return {"raw": text}
 
 
-def _s(value: Any) -> float | None:
-    if value is None:
-        return None
-    try:
-        v = float(value)
-    except (TypeError, ValueError):
-        return None
-    if v <= 0:
-        return None
-    return v / 1000.0
-
-
-def _deterministic_gap_reply(payload: dict[str, Any]) -> EngineerReply:
-    if not payload.get("available"):
-        return EngineerReply(
-            radio_text="Gap data is unstable this second. Keep pushing, I will call it as soon as it settles.",
-            insight_type="info",
-            priority=3,
-        )
-
-    lap = payload.get("lap")
-    position = payload.get("position")
-    gap_leader_s = _s(payload.get("gap_leader_ms"))
-    gap_front_s = _s(payload.get("gap_front_ms"))
-
-    parts: list[str] = []
-    if position:
-        if lap:
-            parts.append(f"You are P{int(position)} on lap {int(lap)}")
-        else:
-            parts.append(f"You are P{int(position)}")
-
-    if position == 1:
-        parts.append("you are leading")
-    elif gap_leader_s is not None:
-        parts.append(f"gap to leader is {gap_leader_s:.1f} seconds")
-
-    if position and int(position) > 1 and gap_front_s is not None:
-        parts.append(f"{gap_front_s:.1f} to the car ahead")
-
-    line = ", ".join(parts).strip()
-    if not line:
-        line = "No reliable gap value available right now."
-    return EngineerReply(
-        radio_text=f"{line}.",
-        insight_type="info",
-        priority=4,
-    )
-
-
-def _deterministic_car_state_reply(payload: dict[str, Any]) -> EngineerReply:
-    if not payload.get("available"):
-        return EngineerReply(
-            radio_text="Car-state feed is unstable this second. Stand by for the next clean sample.",
-            insight_type="info",
-            priority=3,
-        )
-
-    fuel_laps = payload.get("fuel_remaining_laps")
-    ers_pct = payload.get("ers_pct")
-    drs_available = payload.get("drs_available")
-    tyre_age = payload.get("tyre_age_laps")
-    compound = payload.get("compound")
-
-    parts: list[str] = []
-    if fuel_laps is not None:
-        parts.append(f"fuel {float(fuel_laps):.1f} laps")
-    if ers_pct is not None:
-        parts.append(f"ERS {float(ers_pct):.0f} percent")
-    if compound:
-        if tyre_age is not None:
-            parts.append(f"{compound} tyres age {int(tyre_age)} laps")
-        else:
-            parts.append(f"{compound} tyres")
-    parts.append("DRS available" if drs_available else "DRS not available")
-
-    line = ", ".join(parts).strip() or "No clean car-state values available right now."
-    return EngineerReply(
-        radio_text=f"{line}.",
-        insight_type="info",
-        priority=4,
-    )
-
-
-def _deterministic_health_reply(payload: dict[str, Any]) -> EngineerReply:
-    if not payload.get("available"):
-        return EngineerReply(
-            radio_text="Health feed is unstable this second. Keep it tidy while I refresh the data.",
-            insight_type="info",
-            priority=3,
-        )
-
-    max_brake = payload.get("max_brake_temp_c")
-    max_tire = payload.get("max_tire_surface_temp_c")
-    max_damage = payload.get("max_damage_pct")
-    damage_component = payload.get("max_damage_component")
-
-    parts: list[str] = []
-    critical = False
-    if max_brake is not None:
-        parts.append(f"max brake temp {int(max_brake)} C")
-        if float(max_brake) >= 900:
-            critical = True
-    if max_tire is not None:
-        parts.append(f"max tyre surface {int(max_tire)} C")
-        if float(max_tire) >= 112:
-            critical = True
-    if max_damage is not None and max_damage_component:
-        parts.append(f"{damage_component} damage {int(max_damage)} percent")
-        if float(max_damage) >= 45:
-            critical = True
-
-    line = ", ".join(parts).strip() or "No major health issues flagged right now."
-    return EngineerReply(
-        radio_text=f"{line}.",
-        insight_type="warning" if critical else "info",
-        priority=5 if critical else 4,
-    )
-
-
-def _deterministic_full_snapshot_reply(
-    payload: dict[str, Any],
-    query: str,
-) -> EngineerReply:
-    lowered = (query or "").strip().lower()
-
-    session = payload.get("session") or {}
-    setup = payload.get("setup") or {}
-    history = payload.get("session_history") or {}
-    participants = payload.get("participants") or {}
-    events = payload.get("events") or {}
-
-    if "weather" in lowered or "rain" in lowered:
-        weather = session.get("weather")
-        rain_pct = session.get("rain_percentage")
-        track_temp = session.get("track_temperature_c")
-        air_temp = session.get("air_temperature_c")
-        return EngineerReply(
-            radio_text=(
-                f"Weather {weather or 'unknown'}, rain risk {rain_pct if rain_pct is not None else 'n/a'} percent, "
-                f"track {track_temp if track_temp is not None else 'n/a'} C, air {air_temp if air_temp is not None else 'n/a'} C."
-            ),
-            insight_type="info",
-            priority=4,
-        )
-
-    if "setup" in lowered or "wing" in lowered or "suspension" in lowered:
-        return EngineerReply(
-            radio_text=(
-                f"Setup check: front wing {setup.get('front_wing', 'n/a')}, rear wing {setup.get('rear_wing', 'n/a')}, "
-                f"brake bias {setup.get('brake_bias', 'n/a')} percent."
-            ),
-            insight_type="info",
-            priority=4,
-        )
-
-    if "history" in lowered or "best lap" in lowered:
-        return EngineerReply(
-            radio_text=(
-                f"Session history shows {history.get('num_laps', 'n/a')} laps logged, "
-                f"best lap {history.get('best_lap_time_ms', 'n/a')} milliseconds."
-            ),
-            insight_type="info",
-            priority=4,
-        )
-
-    if "participants" in lowered or "ahead" in lowered or "behind" in lowered:
-        return EngineerReply(
-            radio_text=(
-                f"We have {participants.get('num_active_cars', 'n/a')} active cars. "
-                f"Ahead {participants.get('ahead_driver', 'unknown')}, behind {participants.get('behind_driver', 'unknown')}."
-            ),
-            insight_type="info",
-            priority=4,
-        )
-
-    recent_events = events.get("recent_codes") or []
-    summary = ", ".join(recent_events[:3]) if recent_events else "none"
-    return EngineerReply(
-        radio_text=(
-            f"Full telemetry packets are online. Recent events {summary}. "
-            "Call the exact metric you want and I will give the number."
-        ),
-        insight_type="info",
-        priority=3,
-    )
-
-
-def _deterministic_tool_reply(
-    tool_name: str,
-    payload: dict[str, Any] | None,
-    query: str,
-) -> EngineerReply | None:
-    data = payload or {}
-    if tool_name == "telemetry_gap":
-        return _deterministic_gap_reply(data)
-    if tool_name == "telemetry_car_state":
-        return _deterministic_car_state_reply(data)
-    if tool_name == "telemetry_health":
-        return _deterministic_health_reply(data)
-    if tool_name == "telemetry_full_snapshot":
-        return _deterministic_full_snapshot_reply(data, query)
-    return None
-
-
 def _sanitize_radio_text(text: str) -> str:
     cleaned = (text or "").strip()
     if not cleaned:
@@ -399,6 +213,16 @@ def make_plan_node(planner_client: ChatClient):
         query = _latest_driver_message(messages)
 
         heuristic_tool = _heuristic_tool_name(query)
+        if heuristic_tool == "none" and any(
+            marker in (query or "").strip().lower() for marker in _SOCIAL_MARKERS
+        ):
+            return {
+                "plan": EngineerPlan(
+                    intent="general",
+                    needs_tool=False,
+                    tool_name="none",
+                ).model_dump()
+            }
         if heuristic_tool != "none":
             plan = EngineerPlan(
                 intent="telemetry",
@@ -487,14 +311,8 @@ def make_respond_node(reply_client: ChatClient):
         except Exception:
             plan = EngineerPlan()
 
-        deterministic = _deterministic_tool_reply(
-            tool_name or plan.tool_name,
-            tool_payload,
-            query,
-        )
-        if deterministic is not None:
-            final = deterministic
-        else:
+        final: EngineerReply | None = None
+        if reply_client.available:
             conversation_context = _conversation_context(messages)
             system_prompt = build_advisor_system_prompt(
                 telemetry_context=state.get("telemetry_context", "No telemetry data available yet."),
@@ -530,27 +348,33 @@ def make_respond_node(reply_client: ChatClient):
                 priority=4,
             )
 
-            if reply_client.available:
-                structured = await reply_client.generate_structured(
-                    system_prompt=system_prompt,
-                    user_prompt=user_prompt,
-                    schema=EngineerReply,
-                )
-                if isinstance(structured, EngineerReply):
-                    final = structured
-                elif isinstance(structured, dict):
-                    try:
-                        final = EngineerReply.model_validate(structured)
-                    except Exception:
-                        pass
-                else:
-                    text = await reply_client.generate_text(system_prompt, user_prompt)
-                    if text:
-                        final = EngineerReply(
-                            radio_text=text,
-                            insight_type="warning" if plan.intent == "urgent" else "info",
-                            priority=5 if plan.intent == "urgent" else 4,
-                        )
+            structured = await reply_client.generate_structured(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                schema=EngineerReply,
+            )
+            if isinstance(structured, EngineerReply):
+                final = structured
+            elif isinstance(structured, dict):
+                try:
+                    final = EngineerReply.model_validate(structured)
+                except Exception:
+                    final = None
+            else:
+                text = await reply_client.generate_text(system_prompt, user_prompt)
+                if text:
+                    final = EngineerReply(
+                        radio_text=text,
+                        insight_type="warning" if plan.intent == "urgent" else "info",
+                        priority=5 if plan.intent == "urgent" else 4,
+                    )
+
+        if final is None:
+            final = EngineerReply(
+                radio_text="Copy. I'm with you. Keep the car tidy.",
+                insight_type="info",
+                priority=4,
+            )
 
         safe_text = _sanitize_radio_text(final.radio_text)
         safe_text = to_radio_brief(safe_text, max_sentences=2, max_chars=175)

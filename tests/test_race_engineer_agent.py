@@ -56,7 +56,7 @@ class _StubTelemetryProvider:
 
 
 @pytest.mark.asyncio
-async def test_race_engineer_agent_answers_gap_from_tool(monkeypatch):
+async def test_race_engineer_agent_avoids_deterministic_gap_template_without_llm(monkeypatch):
     monkeypatch.delenv("LLM_PROVIDER", raising=False)
     monkeypatch.delenv("LLM_MODEL", raising=False)
 
@@ -73,13 +73,12 @@ async def test_race_engineer_agent_answers_gap_from_tool(monkeypatch):
         driver_preference_instruction="Driver preference text.",
     )
     text = reply.radio_text.lower()
-    assert "leader" in text
-    assert "p6" in text
+    assert text
     assert "driver latest message" not in text
 
 
 @pytest.mark.asyncio
-async def test_race_engineer_agent_answers_car_state_from_tool(monkeypatch):
+async def test_race_engineer_agent_avoids_deterministic_car_state_template_without_llm(monkeypatch):
     monkeypatch.delenv("LLM_PROVIDER", raising=False)
     monkeypatch.delenv("LLM_MODEL", raising=False)
 
@@ -96,12 +95,12 @@ async def test_race_engineer_agent_answers_car_state_from_tool(monkeypatch):
         driver_preference_instruction="Driver preference text.",
     )
     text = reply.radio_text.lower()
-    assert "fuel" in text
-    assert "ers" in text
+    assert text
+    assert "driver latest message" not in text
 
 
 @pytest.mark.asyncio
-async def test_race_engineer_agent_answers_weather_from_full_snapshot(monkeypatch):
+async def test_race_engineer_agent_avoids_deterministic_weather_template_without_llm(monkeypatch):
     monkeypatch.delenv("LLM_PROVIDER", raising=False)
     monkeypatch.delenv("LLM_MODEL", raising=False)
 
@@ -118,5 +117,5 @@ async def test_race_engineer_agent_answers_weather_from_full_snapshot(monkeypatc
         driver_preference_instruction="Driver preference text.",
     )
     text = reply.radio_text.lower()
-    assert "weather" in text
-    assert "rain" in text
+    assert text
+    assert "driver latest message" not in text

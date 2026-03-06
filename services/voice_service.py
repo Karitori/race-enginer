@@ -1,5 +1,7 @@
 import asyncio
 import logging
+import os
+import time
 from typing import Any
 
 from models.telemetry import DriverQuery, DrivingInsight
@@ -11,6 +13,15 @@ from services.llm_factory import ChatClient
 from utils.radio_text import to_radio_brief
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_float(raw: str | None, default: float) -> float:
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
 
 
 class VoiceAssistant:
@@ -25,6 +36,16 @@ class VoiceAssistant:
         self._is_speaking = False
         self._speak_lock = asyncio.Lock()
         self._tasks: list[asyncio.Task[Any]] = []
+        self._recent_insight_times: dict[str, float] = {}
+        self._insight_repeat_window_sec = _parse_float(
+            os.getenv("VOICE_INSIGHT_REPEAT_WINDOW_SEC"), 18.0
+        )
+        self._warning_repeat_window_sec = _parse_float(
+            os.getenv("VOICE_WARNING_REPEAT_WINDOW_SEC"), 10.0
+        )
+        self._strategy_repeat_window_sec = _parse_float(
+            os.getenv("VOICE_STRATEGY_REPEAT_WINDOW_SEC"), 14.0
+        )
 
         # Priority queue: (negative_priority, sequence, insight)
         self._priority_queue: asyncio.PriorityQueue[tuple[int, int, DrivingInsight]] = (
@@ -103,6 +124,12 @@ class VoiceAssistant:
                 type=insight.type,
                 priority=insight.priority,
             )
+        if not self._should_enqueue_insight(insight):
+            logger.debug(
+                "VOICE ENGINE: suppressing duplicate insight within cooldown: %s",
+                brief_message,
+            )
+            return
         self._seq += 1
         queue_priority = (
             -insight.priority
@@ -110,6 +137,34 @@ class VoiceAssistant:
             else 0
         )
         await self._priority_queue.put((queue_priority, self._seq, insight))
+
+    def _insight_signature(self, insight: DrivingInsight) -> str:
+        normalized = " ".join((insight.message or "").strip().lower().split())
+        return f"{insight.type}|{insight.priority}|{normalized}"
+
+    def _repeat_window_for(self, insight: DrivingInsight) -> float:
+        if insight.type == "warning" or insight.priority >= 5:
+            return self._warning_repeat_window_sec
+        if insight.type == "strategy":
+            return self._strategy_repeat_window_sec
+        return self._insight_repeat_window_sec
+
+    def _should_enqueue_insight(self, insight: DrivingInsight) -> bool:
+        now = time.monotonic()
+        signature = self._insight_signature(insight)
+        window = max(0.0, self._repeat_window_for(insight))
+        last_time = self._recent_insight_times.get(signature)
+        if last_time is not None and (now - last_time) < window:
+            return False
+
+        self._recent_insight_times[signature] = now
+        # Keep the dedupe cache bounded.
+        if len(self._recent_insight_times) > 128:
+            cutoff = now - max(self._insight_repeat_window_sec, 60.0)
+            stale = [k for k, v in self._recent_insight_times.items() if v < cutoff]
+            for key in stale:
+                self._recent_insight_times.pop(key, None)
+        return True
 
     async def _stt_loop(self) -> None:
         await self.audio_input.run(self._on_driver_transcript)

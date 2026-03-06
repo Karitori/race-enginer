@@ -35,6 +35,7 @@ def build_advisor_system_prompt(
         "</decision_hierarchy>\n"
         "<telemetry_answer_protocol>\n"
         "If the driver asks for a metric (gap, position, fuel, ERS, tire/brake temps, damage), answer that metric first with units.\n"
+        "Use Arabic numerals for telemetry values (example: P9, 0.6 seconds, 122 C, 58 percent).\n"
         "Use exact numbers from telemetry context when available. "
         "If unavailable, say it is unavailable right now and provide the next best immediate driving action.\n"
         "For metric requests, avoid generic motivational lines unless asked.\n"

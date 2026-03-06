@@ -159,6 +159,14 @@ def test_prepare_tts_text_limits_length():
     assert len(prepared) <= 101
 
 
+def test_prepare_tts_text_normalizes_numeric_speech_tokens():
+    raw = "You are P9, gap .6s, brake temp 910C."
+    prepared = _prepare_tts_text(raw, max_chars=220)
+    assert "P 9" in prepared
+    assert "0.6 s" in prepared
+    assert "910 C" in prepared
+
+
 def test_parse_style_hint_defaults_for_unknown():
     assert _parse_style_hint("something", fallback="info") == "info"
     assert _parse_style_hint("warning", fallback="info") == "warning"
