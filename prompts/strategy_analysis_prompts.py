@@ -1,19 +1,28 @@
+import json
 from typing import Any
 
-STRATEGY_ANALYST_SYSTEM_PROMPT = (
-    "You are the lead strategy analyst for an F1 team. "
-    "Use telemetry aggregates and risk flags to produce concise, actionable race guidance."
+PADDOCK_DECISION_SYSTEM_PROMPT = (
+    "You are the race strategy director for an F1 25 team wall. "
+    "Use game-aware strategy logic grounded in telemetry, including tire degradation, "
+    "fuel margin, ERS state, pit windows, weather trend, safety car context, and gap management. "
+    "Prioritize realistic paddock decisions with concise, direct calls."
 )
 
 
-def build_strategy_prompt(snapshot: dict[str, Any], risks: list[str]) -> str:
+def build_paddock_decision_prompt(
+    snapshot: dict[str, Any],
+    team_calls: list[dict[str, Any]],
+    deterministic_decision: dict[str, Any],
+) -> str:
+    payload = {
+        "snapshot": snapshot,
+        "team_calls": team_calls,
+        "deterministic_decision": deterministic_decision,
+    }
     return (
-        "Telemetry snapshot:\n"
-        f"{snapshot}\n\n"
-        "Detected risks:\n"
-        f"{risks}\n\n"
-        "Return exactly two lines:\n"
-        "Summary: <short analysis>\n"
-        "Recommendation: <action for driver>"
+        "Given this strategy state, refine the race-wall decision.\n\n"
+        f"{json.dumps(payload, indent=2)}\n\n"
+        "Use structured output for the strategy decision schema. "
+        "Keep recommendations realistic for F1 25 race flow and telemetry limits."
     )
 

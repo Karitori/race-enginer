@@ -17,4 +17,30 @@ class StrategyInsight(BaseModel):
         1,
         description="1-5. 5 means the Race Engineer must interrupt the driver immediately.",
     )
+    confidence: float = Field(
+        0.5,
+        ge=0.0,
+        le=1.0,
+        description="Model confidence in the recommendation (0.0-1.0).",
+    )
+    risk_tags: list[str] = Field(
+        default_factory=list,
+        description="Machine-readable risk labels used by downstream services.",
+    )
+    pit_call: str | None = Field(
+        default=None,
+        description="Pit strategy call (if applicable).",
+    )
+    fuel_call: str | None = Field(
+        default=None,
+        description="Fuel management call (if applicable).",
+    )
+    ers_call: str | None = Field(
+        default=None,
+        description="ERS deployment/harvest call (if applicable).",
+    )
+    team_notes: list[str] = Field(
+        default_factory=list,
+        description="Supporting notes from specialist paddock roles.",
+    )
 

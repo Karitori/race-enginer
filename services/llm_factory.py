@@ -4,6 +4,7 @@ from typing import Any
 
 from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage, SystemMessage
+from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
@@ -66,4 +67,37 @@ class ChatClient:
                     text_parts.append(str(item["text"]))
             text = "\n".join(p for p in text_parts if p).strip()
             return text or None
+        return None
+
+    async def generate_structured(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        schema: type[BaseModel],
+    ) -> BaseModel | dict[str, Any] | None:
+        """Generate structured output bound to a Pydantic schema."""
+        if not self._model:
+            return None
+
+        try:
+            model = self._model.with_structured_output(schema)
+        except Exception as exc:
+            logger.warning("structured output is unavailable for this model: %s", exc)
+            return None
+
+        messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=user_prompt),
+        ]
+
+        try:
+            response = await model.ainvoke(messages)
+        except Exception as exc:
+            logger.error("structured llm request failed: %s", exc)
+            return None
+
+        if isinstance(response, BaseModel):
+            return response
+        if isinstance(response, dict):
+            return response
         return None
