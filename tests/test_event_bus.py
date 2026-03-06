@@ -1,6 +1,6 @@
 import asyncio
 import pytest
-from race_engineer.core.event_bus import EventBus
+from services.event_bus_service import EventBus
 
 
 @pytest.mark.asyncio

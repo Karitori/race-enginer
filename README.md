@@ -1,75 +1,63 @@
-# Race Engineer 🏎️🎙️
+# Race Engineer
 
-Race Engineer is an AI-powered, real-time voice assistant and telemetry analyzer for Formula 1 racing simulations and offline analysis. It ingests live telemetry data, uses DuckDB for ultra-fast time-series storage, and leverages the Google Gemini API to act as your personal race engineer—offering voice-activated insights, dynamic strategy advice, and performance analysis.
+Race Engineer is an AI-powered, real-time voice assistant and telemetry analyzer for Formula 1 simulations and offline analysis.
 
-## Features
+## Architecture Layout
 
-- **Live Telemetry Parsing**: Captures and decodes UDP telemetry data in real-time.
-- **Voice Assistant**: Integrated Speech-to-Text (STT) and Text-to-Speech (TTS) for hands-free interactions while driving.
-- **AI Strategy & Advisor**: Uses Google Gemini to analyze race context and telemetry, providing actionable advice on tires, fuel, pace, and strategy.
-- **Fast Data Storage**: Powered by DuckDB for rapid querying of race sessions and telemetry frames.
-- **Web UI**: Built-in FastAPI and WebSockets server for real-time visualization and dashboarding.
+This fork now uses root-level architecture modules with explicit ownership:
+- `agents`: full LangGraph agent wiring per agent (optional when node-only flow is enough)
+- `db`: database access and repositories
+- `docs`: readme and project documentation
+- `models`: all Pydantic models/schemas for the project
+- `nodes`: all LangGraph nodes
+- `prompts`: prompt templates
+- `routes`: FastAPI route handlers imported by `main.py`
+- `services`: shared services/factories/singletons (LLM clients, orchestration)
+- `tools`: LangChain tools (`@tool`-decorated modules)
+- `utils`: helper functions grouped by functionality
+- `main.py`: application entry point (not a directory)
+
+Role-reflective file naming is now applied, for example:
+- `agents/strategy_agent.py`
+- `nodes/strategy_analysis_nodes.py`
+- `routes/api_routes.py`, `routes/websocket_routes.py`, `routes/dashboard_routes.py`
+- `services/race_engineer_service.py`, `services/voice_service.py`, `services/feedback_service.py`
+- `services/telemetry_mode_service.py`, `services/http_server_service.py`
+- `db/telemetry_store.py`, `db/telemetry_repository.py`
+- `tools/strategy_snapshot_tool.py`
+
+All project source directories are kept flat (no nested source subdirectories).
+
+## Dependency Management
+
+This project is now `uv` managed.
 
 ## Prerequisites
 
-- **Python 3.10+**
-- **Microphone & Speakers** (for Voice Assistant)
-- **Google Gemini API Key** (for the AI Advisor logic)
+- Python 3.10+
+- `uv`
+- Optional: microphone/speakers for voice output
+- LLM env vars in `.env` for advisor/voice (example: `LLM_PROVIDER=google_genai`, `LLM_MODEL=gemini-2.5-flash`)
 
-## Installation
-
-1. **Clone the repository:**
-   ```bash
-   git clone https://github.com/your-username/race-engineer.git
-   cd race-engineer
-   ```
-
-2. **Create a virtual environment:**
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   ```
-
-3. **Install dependencies:**
-   Some audio libraries like `PyAudio` might require system-level audio development headers (e.g., `portaudio` on macOS/Linux).
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-4. **Environment Setup:**
-   Copy the example environment file and add your Gemini API Key.
-   ```bash
-   cp .env.example .env
-   ```
-   Edit `.env` and insert your `GEMINI_API_KEY`.
-
-## Usage
-
-To run the application, including the main server and the background AI agent, you can use the provided `start` script:
+## Setup
 
 ```bash
-chmod +x start
-./start
+uv sync
 ```
-
-This will:
-- Launch the **OpenCode Strategy Analyst Agent** (`opencode_agent.py`) in the background.
-- Start the main **Race Engineer App** (`main.py`) with auto-reloading enabled via `watchdog`.
-
-Alternatively, to start components manually:
 
 ```bash
-python main.py
+cp .env.example .env
 ```
 
-## Architecture
+## Run
 
-For an in-depth look at the internal architecture, check out our [Architecture Guide](docs/ARCHITECTURE.md).
+```bash
+uv run python main.py
+```
 
-## Contributing
+## Notes
 
-Contributions are welcome! Please open an issue or submit a Pull Request if you'd like to improve the telemetry parsers, voice models, or add support for new racing sims.
+- `requirements.txt` is removed.
+- Phase 2 LangGraph strategy execution now runs in-process via `agents/strategy_agent.py`.
+- Real UDP telemetry still requires the external F1 parser definitions repo to be present locally.
 
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.

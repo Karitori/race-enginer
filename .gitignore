@@ -22,6 +22,7 @@ share/python-wheels/
 MANIFEST
 
 # Virtual Environments
+.venv/
 venv/
 env/
 ENV/
@@ -59,8 +60,11 @@ Thumbs.db
 .mypy_cache/
 .ruff_cache/
 .pytest_cache/
+.hypothesis/
 .coverage
+.coverage.*
 htmlcov/
+.cache/
 
 # Reference / third-party telemetry applications
 f1-25-telemetry-application/
@@ -71,3 +75,15 @@ gemini-plan.md
 
 # Scripts
 start
+
+# Python toolchain / local metadata
+.python-version
+__pypackages__/
+
+# Notebooks
+.ipynb_checkpoints/
+
+# Misc runtime artifacts
+*.pid
+*.tmp
+*.bak

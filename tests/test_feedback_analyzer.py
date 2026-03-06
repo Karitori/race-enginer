@@ -1,8 +1,8 @@
 import asyncio
 import pytest
-from race_engineer.core.event_bus import bus
-from race_engineer.feedback.analyzer import PerformanceAnalyzer
-from race_engineer.telemetry.models import TelemetryTick, DrivingInsight
+from services.event_bus_service import bus
+from services.feedback_service import PerformanceAnalyzer
+from models.telemetry import TelemetryTick, DrivingInsight
 
 
 @pytest.fixture

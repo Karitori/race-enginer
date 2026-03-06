@@ -1,0 +1,50 @@
+[project]
+name = "race-engineer"
+version = "0.1.0"
+description = "AI-powered race engineer for F1 telemetry, strategy, and voice comms"
+readme = "readme.md"
+requires-python = ">=3.10"
+dependencies = [
+  "pydantic>=2.5.2",
+  "httpx>=0.28.1",
+  "pyttsx3>=2.90",
+  "SpeechRecognition>=3.10.0",
+  "PyAudio>=0.2.14",
+  "fastapi>=0.105.0",
+  "uvicorn>=0.24.0.post1",
+  "websockets>=12.0",
+  "duckdb>=0.9.2",
+  "python-dotenv>=1.0.1",
+  "langchain>=0.3.0",
+  "langgraph>=0.2.0",
+  "langchain-google-genai>=2.1.0",
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=7.4.3",
+  "pytest-asyncio>=0.23.2",
+  "black>=23.11.0",
+  "ruff>=0.1.6",
+]
+
+[tool.uv]
+default-groups = ["dev"]
+
+[tool.hatch.build.targets.wheel]
+packages = [
+  "agents",
+  "db",
+  "models",
+  "nodes",
+  "prompts",
+  "routes",
+  "services",
+  "tools",
+  "utils",
+]
+
+[build-system]
+requires = ["hatchling>=1.24.0"]
+build-backend = "hatchling.build"
+
