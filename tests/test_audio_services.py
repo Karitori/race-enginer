@@ -78,6 +78,15 @@ def test_audio_input_control_set_mic(monkeypatch):
     assert status["mic_index"] == 2
 
 
+def test_audio_input_forces_cpu_runtime(monkeypatch):
+    monkeypatch.setenv("VOICE_STT_BACKEND", "whisper")
+    monkeypatch.setenv("VOICE_STT_WHISPER_DEVICE", "cuda")
+    monkeypatch.setenv("VOICE_STT_WHISPER_COMPUTE_TYPE", "float16")
+    service = AudioInputService()
+    assert service.whisper_device == "cpu"
+    assert service.whisper_compute_type == "int8"
+
+
 def test_audio_output_can_be_disabled(monkeypatch):
     monkeypatch.setenv("VOICE_ENABLE_TTS", "false")
     service = AudioOutputService()

@@ -100,20 +100,28 @@ class AudioInputService:
             os.getenv("VOICE_STT_DYNAMIC_ENERGY_THRESHOLD"), True
         )
         self.energy_threshold = _parse_optional_int(os.getenv("VOICE_STT_ENERGY_THRESHOLD"))
-        self.auto_cpu_fallback = _parse_bool(os.getenv("VOICE_STT_AUTO_CPU_FALLBACK"), True)
+        self.auto_cpu_fallback = False
 
         self.whisper_model = (os.getenv("VOICE_STT_WHISPER_MODEL", "turbo") or "turbo").strip()
-        self.whisper_device = (
+        requested_device = (
             os.getenv("VOICE_STT_WHISPER_DEVICE", _default_torch_device())
             or _default_torch_device()
         ).strip()
-        self.whisper_compute_type = (
+        requested_compute_type = (
             os.getenv(
                 "VOICE_STT_WHISPER_COMPUTE_TYPE",
-                "float16" if self.whisper_device == "cuda" else "int8",
+                "float16" if requested_device == "cuda" else "int8",
             )
             or "int8"
         ).strip()
+        if requested_device != "cpu" or requested_compute_type != "int8":
+            logger.warning(
+                "forcing STT runtime to cpu/int8 (requested device=%s compute_type=%s)",
+                requested_device,
+                requested_compute_type,
+            )
+        self.whisper_device = "cpu"
+        self.whisper_compute_type = "int8"
         self.whisper_beam_size = max(1, _parse_int(os.getenv("VOICE_STT_WHISPER_BEAM_SIZE"), 1))
         self.whisper_vad_filter = _parse_bool(os.getenv("VOICE_STT_WHISPER_VAD_FILTER"), False)
 
