@@ -267,19 +267,11 @@ class AudioOutputService:
             style = "warning"
 
         if style == "warning":
-            if not text.lower().startswith(("listen", "right now", "no delay")):
-                text = f"Listen, {text}"
             return text if text.endswith("!") else f"{text}!"
         if style == "encouragement":
-            if text.lower().startswith(("great job", "nice", "good")):
-                return text
-            return f"Nice one, {text}"
+            return text
         if style == "strategy":
-            if not text.lower().startswith(("copy", "understood", "right")):
-                text = f"Copy, {text}"
             return text.replace(" now", " now, copy")
-        if not text.lower().startswith(("okay", "copy", "right")):
-            return f"Okay, {text}"
         return text
 
     async def speak(

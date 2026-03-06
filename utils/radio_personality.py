@@ -42,15 +42,6 @@ _URGENCY_MARKERS = (
     "puncture",
 )
 
-_PERSONA_OPENERS: dict[EngineerPersona, tuple[str, ...]] = {
-    "pitwall_commander": ("Listen,", "Right now,", "No delay,"),
-    "calm_coach": ("Okay, breathe,", "Stay with me,", "All right, reset,"),
-    "dry_wit_teammate": ("Good one,", "Comedy later,", "Nice banter,"),
-    "strategist": ("Copy,", "Understood,", "Right,"),
-    "focused_teammate": ("Okay,", "Copy that,", "Right then,"),
-}
-
-
 def detect_driver_tone(query: str) -> DriverTone:
     text = (query or "").strip().lower()
     if not text:
@@ -131,23 +122,16 @@ def apply_persona_fillers(
     strategy_critical: bool,
     rapport_level: int,
 ) -> str:
-    """Add small radio fillers to improve TTS rhythm and realism."""
+    """Light-touch rhythm shaping without hardcoded lexical fillers."""
     cleaned = (text or "").strip()
     if not cleaned:
         return cleaned
 
-    lowered = cleaned.lower()
-    if lowered.startswith(
-        ("copy", "okay", "right", "listen", "understood", "stay with me", "no delay")
-    ):
-        return cleaned
-
-    chosen_persona: EngineerPersona = (
-        "pitwall_commander" if strategy_critical or tone == "urgent" else persona
-    )
-    options = _PERSONA_OPENERS.get(chosen_persona, _PERSONA_OPENERS["focused_teammate"])
-    opener = options[(rapport_level + len(cleaned)) % len(options)]
-    return f"{opener} {cleaned}"
+    # Keep wording model-driven; only add punctuation emphasis for urgent calls.
+    if strategy_critical or tone == "urgent":
+        if cleaned[-1] not in ".!?":
+            return f"{cleaned}!"
+    return cleaned
 
 
 def tone_instruction(

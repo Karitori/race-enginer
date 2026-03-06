@@ -79,11 +79,13 @@ class AudioInputService:
         self.timeout_sec = _parse_float(os.getenv("VOICE_STT_TIMEOUT_SEC"), 4.0)
         self.phrase_limit_sec = _parse_float(os.getenv("VOICE_STT_PHRASE_LIMIT_SEC"), 6.0)
         self.ambient_sec = _parse_float(os.getenv("VOICE_STT_AMBIENT_SEC"), 0.4)
+        self.ptt_chunk_sec = _parse_float(os.getenv("VOICE_STT_PTT_CHUNK_SEC"), 2.2)
         self.mic_index = _parse_optional_int(os.getenv("VOICE_STT_MIC_INDEX"))
         self.dynamic_energy_threshold = _parse_bool(
             os.getenv("VOICE_STT_DYNAMIC_ENERGY_THRESHOLD"), True
         )
         self.energy_threshold = _parse_optional_int(os.getenv("VOICE_STT_ENERGY_THRESHOLD"))
+        self.auto_cpu_fallback = _parse_bool(os.getenv("VOICE_STT_AUTO_CPU_FALLBACK"), True)
 
         self.whisper_model = (os.getenv("VOICE_STT_WHISPER_MODEL", "turbo") or "turbo").strip()
         self.whisper_device = (
@@ -106,11 +108,15 @@ class AudioInputService:
         self._recognizer: Any = None
         self._microphone: Any = None
         self._whisper_model: Any = None
+        self._whisper_model_cls: Any = None
         self._whisper_model_ref: str = "turbo"
         self._ambient_calibrated = False
         self._mic_name = "default"
         self._last_error: str | None = None
         self._gate_wait_logged = False
+        self._capture_error_count = 0
+        self._transcribe_error_count = 0
+        self._cpu_fallback_activated = False
         self._toggle_active = _parse_bool(os.getenv("VOICE_STT_TOGGLE_DEFAULT_ON"), False)
         self._ptt_pressed = False
         self._setup_backend()
@@ -189,6 +195,8 @@ class AudioInputService:
             "enabled": self.enabled,
             "available": self._available,
             "backend": self.backend,
+            "whisper_device": self.whisper_device,
+            "whisper_compute_type": self.whisper_compute_type,
             "mic_index": self.mic_index,
             "mic_name": self._mic_name,
             "control_mode": self.control_mode,
@@ -197,6 +205,9 @@ class AudioInputService:
             "capture_gate_open": gate_open,
             "capture_active": gate_open and self.available,
             "last_error": self._last_error,
+            "capture_errors": self._capture_error_count,
+            "transcribe_errors": self._transcribe_error_count,
+            "cpu_fallback_activated": self._cpu_fallback_activated,
         }
 
     def apply_control_action(
@@ -230,6 +241,8 @@ class AudioInputService:
             self._toggle_active = _parse_bool(os.getenv("VOICE_STT_TOGGLE_DEFAULT_ON"), False)
             self._ptt_pressed = False
             self._last_error = None
+            self._capture_error_count = 0
+            self._transcribe_error_count = 0
         return self.get_control_status()
 
     def _setup_whisper(self) -> None:
@@ -261,22 +274,21 @@ class AudioInputService:
             from faster_whisper import WhisperModel  # type: ignore
 
             self._sr = sr
+            self._whisper_model_cls = WhisperModel
             self._recognizer = sr.Recognizer()
             self._recognizer.dynamic_energy_threshold = self.dynamic_energy_threshold
             if self.energy_threshold is not None:
                 self._recognizer.energy_threshold = max(10, self.energy_threshold)
             self._build_microphone()
-            self._whisper_model = WhisperModel(
-                model_size_or_path=self._whisper_model_ref,
-                device=self.whisper_device,
-                compute_type=self.whisper_compute_type,
-                local_files_only=True,
-            )
-            self._available = True
+            if not self._initialize_whisper_model():
+                self._available = False
+                return
+
+            self._available = self._whisper_model is not None
             logger.info(
                 (
                     "whisper turbo STT backend enabled "
-                    "(model=%s, device=%s, compute_type=%s, mic=%s, dynamic_energy=%s, energy=%s)"
+                    "(model=%s, device=%s, compute_type=%s, mic=%s, dynamic_energy=%s, energy=%s, auto_cpu_fallback=%s)"
                 ),
                 self._whisper_model_ref,
                 self.whisper_device,
@@ -284,10 +296,48 @@ class AudioInputService:
                 self._mic_name,
                 self.dynamic_energy_threshold,
                 self._recognizer.energy_threshold if self._recognizer else "n/a",
+                self.auto_cpu_fallback,
             )
         except Exception as exc:
             logger.warning("whisper STT initialization failed: %s", exc)
             self._available = False
+
+    def _initialize_whisper_model(self) -> bool:
+        if self._whisper_model_cls is None:
+            self._last_error = "whisper model class unavailable"
+            return False
+        try:
+            self._whisper_model = self._whisper_model_cls(
+                model_size_or_path=self._whisper_model_ref,
+                device=self.whisper_device,
+                compute_type=self.whisper_compute_type,
+                local_files_only=True,
+            )
+            return True
+        except Exception as exc:
+            self._last_error = f"whisper model init failed: {exc}"
+            logger.warning("whisper model init failed (%s/%s): %s", self.whisper_device, self.whisper_compute_type, exc)
+            self._whisper_model = None
+            return False
+
+    def _activate_cpu_fallback(self) -> bool:
+        if not self.auto_cpu_fallback or self._cpu_fallback_activated:
+            return False
+        if self.whisper_device != "cuda":
+            return False
+        logger.warning(
+            "stt cuda path unstable; attempting fallback to cpu/int8 for reliability."
+        )
+        self.whisper_device = "cpu"
+        self.whisper_compute_type = "int8"
+        self._cpu_fallback_activated = True
+        ok = self._initialize_whisper_model()
+        if ok:
+            logger.warning("stt cpu fallback activated successfully.")
+            return True
+        logger.error("stt cpu fallback failed; STT remains unavailable.")
+        self._available = False
+        return False
 
     async def run(
         self,
@@ -330,12 +380,16 @@ class AudioInputService:
                         duration=max(0.0, self.ambient_sec),
                     )
                     self._ambient_calibrated = True
-
-                audio = self._recognizer.listen(
-                    source,
-                    timeout=max(0.1, self.timeout_sec),
-                    phrase_time_limit=max(0.5, self.phrase_limit_sec),
-                )
+                if self.control_mode == "ptt":
+                    # PTT should capture immediately without waiting for voice trigger.
+                    chunk_sec = max(0.5, min(self.ptt_chunk_sec, max(0.5, self.phrase_limit_sec)))
+                    audio = self._recognizer.record(source, duration=chunk_sec)
+                else:
+                    audio = self._recognizer.listen(
+                        source,
+                        timeout=max(0.1, self.timeout_sec),
+                        phrase_time_limit=max(0.5, self.phrase_limit_sec),
+                    )
 
             if self.backend == "whisper":
                 return self._transcribe_with_whisper(audio)
@@ -346,8 +400,12 @@ class AudioInputService:
         except self._sr.UnknownValueError:
             return None
         except Exception as exc:
+            self._capture_error_count += 1
             self._last_error = f"stt capture error: {exc}"
-            logger.debug("stt capture error: %s", exc)
+            if self._capture_error_count <= 2 or self._capture_error_count % 10 == 0:
+                logger.warning("stt capture error (%d): %s", self._capture_error_count, exc)
+            else:
+                logger.debug("stt capture error: %s", exc)
             return None
 
     def _transcribe_with_whisper(self, audio: Any) -> tuple[str, float] | None:
@@ -385,10 +443,24 @@ class AudioInputService:
             logprob_conf = max(0.0, min(1.0, 1.0 + avg_logprob))
             confidence = max(0.0, min(1.0, 0.5 * language_probability + 0.5 * logprob_conf))
             self._last_error = None
+            self._transcribe_error_count = 0
             return text, confidence
         except Exception as exc:
+            self._transcribe_error_count += 1
             self._last_error = f"whisper transcription error: {exc}"
-            logger.debug("whisper transcription error: %s", exc)
+            if self._transcribe_error_count <= 2 or self._transcribe_error_count % 5 == 0:
+                logger.warning(
+                    "whisper transcription error (%d, device=%s/%s): %s",
+                    self._transcribe_error_count,
+                    self.whisper_device,
+                    self.whisper_compute_type,
+                    exc,
+                )
+            else:
+                logger.debug("whisper transcription error: %s", exc)
+
+            if self._activate_cpu_fallback():
+                self._last_error = "switched to cpu/int8 fallback after cuda transcription failures"
             return None
         finally:
             try:

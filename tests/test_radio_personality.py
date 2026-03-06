@@ -52,7 +52,7 @@ def test_choose_engineer_persona_uses_dry_wit_for_banter():
     assert persona == "dry_wit_teammate"
 
 
-def test_apply_persona_fillers_adds_radio_prefix():
+def test_apply_persona_fillers_keeps_model_wording():
     styled = apply_persona_fillers(
         "Push now and protect rear traction.",
         persona="strategist",
@@ -60,8 +60,18 @@ def test_apply_persona_fillers_adds_radio_prefix():
         strategy_critical=False,
         rapport_level=2,
     )
-    assert styled != "Push now and protect rear traction."
-    assert "," in styled
+    assert styled == "Push now and protect rear traction."
+
+
+def test_apply_persona_fillers_adds_urgent_punctuation():
+    styled = apply_persona_fillers(
+        "Box now",
+        persona="pitwall_commander",
+        tone="urgent",
+        strategy_critical=True,
+        rapport_level=1,
+    )
+    assert styled.endswith("!")
 
 
 def test_persona_instruction_contains_persona_identity():
