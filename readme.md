@@ -134,4 +134,8 @@ Temperatures can still be set globally (`LLM_TEMPERATURE`) or per role (`STRATEG
   - recognized speech is shown live in comms log as `[YOU] ...` so you can verify STT capture.
   - driver barge-in is enabled: if you speak while TTS is talking, current engineer audio is interrupted and your query is prioritized.
 - Voice queue summarization now uses structured LLM output instead of manual JSON parsing.
+- Advisor personality now adapts to driver tone:
+  - banter receives light teammate-style wit,
+  - frustration gets calm supportive comms,
+  - urgent/critical situations force direct serious calls.
 

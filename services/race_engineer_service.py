@@ -11,7 +11,13 @@ from models.telemetry_packets import (
 )
 from services.event_bus_service import bus
 from services.llm_factory import ChatClient
+from prompts.race_engineer_prompts import build_advisor_system_prompt
 from utils.radio_context import build_radio_context
+from utils.radio_personality import (
+    detect_driver_tone,
+    next_rapport_level,
+    tone_instruction,
+)
 from utils.radio_text import to_radio_brief
 
 logger = logging.getLogger(__name__)
@@ -26,6 +32,7 @@ class RaceEngineerService:
 
     def __init__(self):
         self.client = ChatClient(role="advisor", temperature=0.3)
+        self._rapport_level = 1
 
         # State tracking (legacy)
         self.latest_telemetry: Optional[TelemetryTick] = None
@@ -98,27 +105,32 @@ class RaceEngineerService:
             return
 
         context = self._build_context()
+        detected_tone = detect_driver_tone(query.query)
+        strategy_critical = bool(self.latest_strategy and self.latest_strategy.criticality >= 4)
+        style_instruction = tone_instruction(
+            detected_tone,
+            rapport_level=self._rapport_level,
+            strategy_critical=strategy_critical,
+        )
+        self._rapport_level = next_rapport_level(self._rapport_level, detected_tone)
 
         if not self.client.available:
             logger.warning("advisor LLM not configured. Using fallback dynamic response.")
             t = self.latest_telemetry
-            fallback_msg = f"I'm offline, but I see your front left tire is at {t.tire_wear_fl:.1f} percent."
+            fallback_prefix = "Nice one. " if detected_tone == "banter" else ""
+            fallback_msg = (
+                f"{fallback_prefix}I'm offline, but I see your front left tire is "
+                f"at {t.tire_wear_fl:.1f} percent."
+            )
             await self._send_insight(
                 to_radio_brief(fallback_msg, max_sentences=2, max_chars=150),
                 "info",
             )
             return
 
-        system_prompt = (
-            "You are an F1 Race Engineer speaking directly over the radio to your driver. "
-            "Assume the race is live right now and address the driver directly. "
-            "Give concise, high-signal radio answers. Use 1-2 short sentences max. "
-            "Lead with the action to take now, then one brief reason if needed. "
-            "Never use bullets, numbering, markdown, or long explanations. "
-            "Use the provided live telemetry to answer the driver's question accurately. "
-            "You have access to tire wear, fuel levels, ERS state, weather, position, "
-            "damage status, and strategy team analysis. "
-            f"Live Telemetry Context: {context}"
+        system_prompt = build_advisor_system_prompt(
+            telemetry_context=context,
+            tone_instruction=style_instruction,
         )
 
         try:
@@ -127,7 +139,7 @@ class RaceEngineerService:
                 brief_answer = to_radio_brief(
                     answer,
                     max_sentences=2,
-                    max_chars=170,
+                    max_chars=190 if detected_tone == "banter" else 170,
                 )
                 if brief_answer:
                     await self._send_insight(brief_answer, "info", priority=4)
