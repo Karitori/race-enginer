@@ -120,7 +120,7 @@ Temperatures can still be set globally (`LLM_TEMPERATURE`) or per role (`STRATEG
   - `VOICE_TTS_BACKEND=kokoro`
   - `VOICE_KOKORO_MODEL_PATH=...` (required local `.onnx`)
   - `VOICE_KOKORO_VOICES_PATH=...` (required local voices `.bin`)
-  - optional: `VOICE_KOKORO_VOICE`, `VOICE_KOKORO_LANG`, `VOICE_KOKORO_SPEED`
+  - optional: `VOICE_KOKORO_VOICE`, `VOICE_KOKORO_LANG`, `VOICE_KOKORO_SPEED`, `VOICE_TTS_MAX_CHARS`
 - Optional mic STT is locked to Whisper Turbo via `VOICE_ENABLE_STT=true` and `VOICE_STT_BACKEND=whisper`.
   - `VOICE_STT_WHISPER_MODEL=turbo` (or a local Turbo model path)
   - optional: `VOICE_STT_WHISPER_DEVICE=cuda`, `VOICE_STT_WHISPER_COMPUTE_TYPE=float16`.

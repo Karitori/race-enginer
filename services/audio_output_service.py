@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import re
 import tempfile
 import wave
 from typing import Any
@@ -34,6 +35,24 @@ def _is_remote_resource(path_or_uri: str) -> bool:
     )
 
 
+def _prepare_tts_text(text: str, max_chars: int) -> str:
+    """Normalize message text for faster, cleaner TTS synthesis."""
+    cleaned = (text or "").replace("\r", " ").replace("\n", " ")
+    cleaned = re.sub(r"[`*_#~\[\]{}<>|]", " ", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    cleaned = re.sub(r"[^A-Za-z0-9 .,!?;:'%/+-]", " ", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    if len(cleaned) <= max_chars:
+        return cleaned
+
+    clipped = cleaned[:max_chars].rsplit(" ", 1)[0].strip()
+    if not clipped:
+        clipped = cleaned[:max_chars].strip()
+    if clipped and clipped[-1] not in ".!?":
+        clipped = f"{clipped}."
+    return clipped
+
+
 class AudioOutputService:
     """Audio output wrapper locked to local Kokoro backend."""
 
@@ -46,7 +65,10 @@ class AudioOutputService:
         self._kokoro_voices_path = (os.getenv("VOICE_KOKORO_VOICES_PATH", "") or "").strip()
         self._kokoro_voice = (os.getenv("VOICE_KOKORO_VOICE", "af_sarah") or "af_sarah").strip()
         self._kokoro_lang = (os.getenv("VOICE_KOKORO_LANG", "en-us") or "en-us").strip()
-        self._kokoro_speed = _clamp_float(_parse_float(os.getenv("VOICE_KOKORO_SPEED"), 1.0), 0.5, 2.0)
+        self._kokoro_speed = _clamp_float(
+            _parse_float(os.getenv("VOICE_KOKORO_SPEED"), 1.15), 0.5, 2.0
+        )
+        self._tts_max_chars = max(80, int(_parse_float(os.getenv("VOICE_TTS_MAX_CHARS"), 220)))
 
         self._kokoro_tts: Any = None
         self._available = False
@@ -92,6 +114,10 @@ class AudioOutputService:
         try:
             from kokoro_onnx import Kokoro
 
+            # phonemizer can emit noisy word-count mismatch warnings for valid input;
+            # keep it quiet unless errors occur.
+            logging.getLogger("phonemizer").setLevel(logging.ERROR)
+
             self._kokoro_tts = Kokoro(
                 model_path=self._kokoro_model_path,
                 voices_path=self._kokoro_voices_path,
@@ -108,16 +134,17 @@ class AudioOutputService:
             self._available = False
 
     async def speak(self, message: str) -> None:
-        if not message:
+        prepared = _prepare_tts_text(message, self._tts_max_chars)
+        if not prepared:
             return
 
         if self._available and self.backend == "kokoro":
             loop = asyncio.get_running_loop()
-            await loop.run_in_executor(None, self._speak_with_kokoro_sync, message)
+            await loop.run_in_executor(None, self._speak_with_kokoro_sync, prepared)
             return
 
         if self._simulate_delay:
-            await asyncio.sleep(min(len(message) * 0.03, 3.0))
+            await asyncio.sleep(min(len(prepared) * 0.02, 2.0))
 
     def _speak_with_kokoro_sync(self, message: str) -> None:
         if self._kokoro_tts is None:

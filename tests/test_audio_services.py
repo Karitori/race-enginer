@@ -1,7 +1,7 @@
 import pytest
 
 from services.audio_input_service import AudioInputService
-from services.audio_output_service import AudioOutputService
+from services.audio_output_service import AudioOutputService, _prepare_tts_text
 
 
 def test_audio_input_disabled_by_default(monkeypatch):
@@ -70,3 +70,19 @@ def test_audio_output_unsupported_backend_is_disabled(monkeypatch):
     monkeypatch.setenv("VOICE_TTS_BACKEND", "legacy_backend")
     service = AudioOutputService()
     assert not service.available
+
+
+def test_prepare_tts_text_strips_markdown_and_noise():
+    raw = "## Strategy\nUse **ERS** now. [note] ~~~"
+    prepared = _prepare_tts_text(raw, max_chars=220)
+    assert "##" not in prepared
+    assert "**" not in prepared
+    assert "[" not in prepared
+    assert "]" not in prepared
+    assert "ERS" in prepared
+
+
+def test_prepare_tts_text_limits_length():
+    raw = "A " * 300
+    prepared = _prepare_tts_text(raw, max_chars=100)
+    assert len(prepared) <= 101
